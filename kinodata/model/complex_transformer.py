@@ -158,6 +158,8 @@ class ComplexTransformer(RegressionModel):
         decoder_hidden_layers: int = 1,
         interaction_modes: List[str] = [],
         dropout: float = 0.1,
+        prob: bool = True,
+        **kwargs
     ) -> None:
         super().__init__(config)
         assert len(config["node_types"]) == 1
@@ -221,16 +223,27 @@ class ComplexTransformer(RegressionModel):
             self.atomic_num_embedding(node_store.z)
             + self.lin_atom_features(node_store.x)
         )
+        intermediate_node_reprs = {}
+        # intermediate_edge_reprs = {}
+        # intermediate_edge_indecies = {}
+
         edge_index, edge_repr = self.interaction_module(data)
-        for sparse_attention_block, norm in zip(
-            self.attention_blocks, self.norm_layers
+        for l, (sparse_attention_block, norm) in enumerate(zip(
+            self.attention_blocks, self.norm_layers)
         ):
             node_repr, edge_repr = sparse_attention_block(
                 node_repr, edge_repr, edge_index
             )
             node_repr = norm(node_repr, node_store.batch)
+            # write out embeddings
+            if self.prob:
+                intermediate_node_reprs[f"layer_{l+1}"] = node_repr
+            # intermediate_edge_reprs[f"layer_{l+1}"] = edge_repr
+            # intermediate_edge_indecies[f"layer_{l+1}"] = edge_index
 
         graph_repr = self.aggr(node_repr, node_store.batch)
+        if self.prob:
+            return self.out(graph_repr), intermediate_node_reprs
         return self.out(graph_repr)
 
 
