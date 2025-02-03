@@ -301,7 +301,7 @@ class KinodataDocked(InMemoryDataset):
         self.num_processes = num_processes
         self.post_filter = post_filter
         super().__init__(root, transform, pre_transform, pre_filter)
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        self.data, self.slices = torch.load(self.processed_paths[0], weights_only = False)
 
     @property
     def pocket_sequence_file(self) -> Path:
@@ -350,7 +350,7 @@ class KinodataDocked(InMemoryDataset):
 
     def _process(self):
         f = osp.join(self.processed_dir, "post_filter.pt")
-        if osp.exists(f) and torch.load(f) != _repr(self.post_filter):
+        if osp.exists(f) and torch.load(f, weights_only = False) != _repr(self.post_filter):
             warnings.warn(
                 f"The `post_filter` argument differs from the one used in "
                 f"the pre-processed version of this dataset. If you want to "
