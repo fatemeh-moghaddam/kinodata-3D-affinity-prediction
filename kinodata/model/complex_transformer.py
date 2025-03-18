@@ -224,8 +224,8 @@ class ComplexTransformer(RegressionModel):
             self.atomic_num_embedding(node_store.z)
             + self.lin_atom_features(node_store.x)
         )
-        # intermediate_node_reprs = {}
-        # intermediate_edge_reprs = {}
+        intermediate_node_reprs = {}
+        intermediate_edge_reprs = {}
         # intermediate_edge_indecies = {}
 
         edge_index, edge_repr = self.interaction_module(data)
@@ -238,16 +238,16 @@ class ComplexTransformer(RegressionModel):
             node_repr = norm(node_repr, node_store.batch)
             # write out embeddings
             if self.prob:
-                torch.save(node_repr, f"node_repr_{l}.pt")
-                torch.save(edge_repr, f"edge_repr_{l}.pt")
-                torch.save(edge_index, f"edge_index_{l}.pt")
-                # intermediate_node_reprs[f"layer_{l+1}"] = node_repr
-                # intermediate_edge_reprs[f"layer_{l+1}"] = edge_repr
+                # torch.save(node_repr, f"node_repr_{l}.pt")
+                # torch.save(edge_repr, f"edge_repr_{l}.pt")
+                # torch.save(edge_index, f"edge_index_{l}.pt")
+                intermediate_node_reprs[f"layer_{l+1}"] = (node_repr.clone().detach(), node_store.batch)
+                intermediate_edge_reprs[f"layer_{l+1}"] = (edge_repr.clone().detach(), edge_index.clone().detach())
                 # intermediate_edge_indecies[f"layer_{l+1}"] = edge_index
 
         graph_repr = self.aggr(node_repr, node_store.batch)
-        # if self.prob:
-            # return self.out(graph_repr), intermediate_node_reprs, intermediate_edge_reprs, intermediate_edge_indecies
+        if self.prob:
+            return self.out(graph_repr), intermediate_node_reprs, intermediate_edge_reprs
         return self.out(graph_repr)
 
 
