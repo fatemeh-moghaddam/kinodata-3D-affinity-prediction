@@ -62,7 +62,7 @@ class GraphReprs:
 
 
     def __repr__(self):
-        return f"<KinodataDocked ident= {self.ident}, layers={list(self.node_reprs.keys())}>"
+        return f"<KinodataDocked ident= {self.ident}, layers={list(self.node_repr.keys())}>"
 
 
 
@@ -85,6 +85,10 @@ class ProbingDataset:
         self.graph_level = graph_level
         if graph_level:
             self.graph_pool = gnn_model.aggr
+        self.batch_size = batch_size
+        self.shuffle = shuffle
+        self.gnn_model_ckpt = gnn_model_ckpt
+        self.loaded_gnn_model = None
 
     
     @property
@@ -92,10 +96,12 @@ class ProbingDataset:
         """
         Load the model from the checkpoint
         """
+        if self.loaded_gnn_model is not None:
+            return self.loaded_gnn_model
         ckp = torch.load(self.gnn_model_ckpt, map_location="cpu")
         model = self.gnn_model
         model.load_state_dict(ckp["state_dict"])
-        return model
+        return model.eval()
         
 
     def __call__(self):
@@ -148,10 +154,10 @@ class ProbingDataset:
         edge_pointer = [0]
         for graph_ei in edge_indices:
             ei_start_point = edge_pointer[-1]  
-            ei_end_point = graph_ei.size(1)     # ei.size = ([2, number_of_edges_in_batch])
-            edge_pointer.append(ei_start_point + ei_end_point)
+            ei_count_point = graph_ei.size(1)     # ei.size = ([2, number_of_edges_in_batch])
+            edge_pointer.append(ei_start_point + ei_count_point)
         # slice the edge_reprs tensor of graphs in the batch to get the unbatched edge features
-        edge_reprs = [edge_repr[edge_pointer[i]:edge_pointer[i+1]] for i in range(self.batch_size)]
+        edge_reprs = [edge_repr[edge_pointer[i]:edge_pointer[i+1]] for i in range(len(edge_pointer)-1)]
         return edge_reprs
 
 
@@ -164,7 +170,7 @@ class ProbingDataset:
         data_module = DataLoader(self.orig_dataset, batch_size= self.batch_size, shuffle=self.shuffle, num_workers=self.num_workers)
 
         
-        self.loaded_gnn_model.eval()
+
         with torch.no_grad():
             for data in tqdm(data_module):
                 batch_graph_idents = data.ident.tolist()
@@ -177,13 +183,13 @@ class ProbingDataset:
                 """
                 graph_reprs_list = list(prior_readout)
                 
-                for layer_name in enumerate(intermediate_node_reprs.keys()):
+                for layer_name in intermediate_node_reprs.keys():
                     node_repr, batch_index = intermediate_node_reprs[layer_name]
                     edge_repr, edge_index = intermediate_edge_reprs[layer_name]
                     # process the representations
                     processed_reprs = self._process_reprs(node_repr, batch_index, edge_index, edge_repr)
                     # Create a list of GraphReprs objects for each graph in the batch
-                    for i in range(self.batch_size):
+                    for i in range(len(batch_graph_idents)):
                         ident = batch_graph_idents[i]
                         graph = GraphReprs(ident)
                         graph.graph_repr['prior_readout'] = graph_reprs_list[i]
@@ -232,10 +238,10 @@ class ProbingDataset:
 
         for g in graphs:
             if level == "graph":
-                x = g.graph_reprs[layer_name].detach().cpu().numpy()
+                x = g.graph_repr[layer_name].detach().cpu().numpy()
                 X_list.append(x)
             elif level == "node":
-                x = g.node_reprs[layer_name].detach().cpu().numpy()
+                x = g.node_repr[layer_name].detach().cpu().numpy()
                 X_list.append(x)
             else:
                 raise ValueError("level must be 'graph' or 'node'")
@@ -262,7 +268,7 @@ class ProbingDataset:
             if level == "graph":
                 y_list.append(y)
             elif level == "node":
-                num_nodes = g.node_reprs[next(iter(g.node_reprs))].shape[0]
+                num_nodes = g.node_repr[next(iter(g.node_repr))].shape[0]
                 y_list.append(np.full(num_nodes, y))
             else:
                 raise ValueError("level must be 'graph' or 'node'")
