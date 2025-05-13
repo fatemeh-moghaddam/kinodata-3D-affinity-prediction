@@ -69,6 +69,10 @@ def load_from_checkpoint(model: RegressionModel, model_ckpt: str) -> RegressionM
 
 
 if __name__ == "__main__":
+    # let's have it deterministic!
+    torch.manual_seed(123)
+    np.random.seed(123)
+    
     # Load the model
     cgnn_3d_path = path_to_model(rmsd_threshold=2, split_type="scaffold-k-fold", split_fold=0, model_type="CGNN-3D")
     # Load the model checkpoint
