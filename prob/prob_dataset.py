@@ -188,7 +188,7 @@ class ProbingDataset:
                     edge_repr, edge_index = intermediate_edge_reprs[layer_name]
                     # process the representations
                     processed_reprs = self._process_reprs(node_repr, batch_index, edge_index, edge_repr)
-                    # Create a list of GraphReprs objects for each graph in the batch
+                    # create a list of GraphReprs for each graph in the batch
                     for i in range(len(batch_graph_idents)):
                         ident = batch_graph_idents[i]
                         graph = GraphReprs(ident)
