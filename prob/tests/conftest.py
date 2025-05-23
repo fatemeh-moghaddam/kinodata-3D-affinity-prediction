@@ -1,27 +1,50 @@
 import torch
 import pytest
-from kinodata_3D_affinity_prediction.prob.prob_dataset import GraphReprs
+from prob.prob_dataset import GraphReprs
+from .test_config import *
+
 
 
 @pytest.fixture
-def graph_repr():
-    # Create a sample GraphReprs object
-    # let's assume hideen_channels = 5, num_nodes = 10, num_edges = 30
-    g1 = GraphReprs(ident = 1)
-    g1.graph_repr = { "layer_0": (torch.randn(5))}
-    g1.node_repr = { "layer_0": (torch.randn(10,5))}   
-    g1.edge_repr = { "layer_0": (torch.randn(30,5))}	
-    g1.edge_index = { "layer_0": (torch.randint(0, 10, (2, 30)))}
-    g1.node_repr_batch = { "layer_0": torch.ones(10, dtype=torch.long)}
+def hidden_channels():
+    return HIDDEN_CHANNELS
 
-    g1.add_property("mw", 300.0)
+@pytest.fixture
+def num_graphs():
+    return NUM_GRAPHS
+
+@pytest.fixture
+def num_nodes():
+    return NUM_NODES
+
+@pytest.fixture
+def num_edges():
+    return NUM_EDGES
+
+@pytest.fixture
+def base_mw():
+    return BASE_MW
+
+@pytest.fixture
+def mw_step():
+    return MW_STEP
+
+
+@pytest.fixture
+def graph_list(num_graphs, num_nodes, num_edges, hidden_channels, base_mw, mw_step):
+    # Create a list of GraphReprs object
+
+    graphs = []
+    for i in range(num_graphs):
+        g = GraphReprs(ident = i)
+        g.graph_repr = { "layer_0": (torch.randn(hidden_channels))}
+        g.node_repr = { "layer_0": (torch.randn(num_nodes,hidden_channels))}
+        g.edge_repr = { "layer_0": (torch.randn(num_edges,hidden_channels))}
+        g.edge_index = { "layer_0": (torch.randint(0, num_nodes, (2, num_nodes)))}
+        # g.node_repr_batch = { "layer_0": torch.ones(num_nodes, dtype=torch.long)*i}
+        # prob target
+        g.add_property("mw", base_mw + i*mw_step)
+        graphs.append(g)
+
+    return graphs
     
-    g2 = GraphReprs(ident = 2)	
-    g2.graph_repr = { "layer_0": (torch.randn(5))}
-    g2.node_repr = { "layer_0": (torch.randn(10,5))}
-    g2.edge_repr = { "layer_0": (torch.randn(30,5))}
-    g2.edge_index = { "layer_0": (torch.randint(0, 10, (2, 30)))}
-    g2.node_repr_batch = { "layer_0": torch.ones(10, dtype=torch.long)*2}
-    
-    g2.add_property("mw", 400.0)
-    return g1
