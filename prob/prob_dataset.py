@@ -30,7 +30,7 @@ class GraphReprs:
         self.node_repr = {}     # layer_name -> Tensor [num_nodes, hidden_dim]
         self.graph_repr = {}    # layer_name -> Tensor [hidden_dim]
         self.edge_repr = {}     # layer_name -> Tensor [num_edges, hidden_dim]
-        self.edge_index = {}    # layer_name -> Tensor [2, num_edges]
+        self.edge_index = {}    # layer_name -> Tensor [2, num_nodes]
         self.properties = {}    # dict of properties
         
 
@@ -142,6 +142,7 @@ class ProbingDataset:
         return node_reprs, edge_reprs, edge_indices
 
 
+    # for atom-level probing
     def _slice_edge_reprs(self,
                         edge_repr: Tensor,
                         edge_indices: List[Tensor],
@@ -161,7 +162,9 @@ class ProbingDataset:
         return edge_reprs
 
 
-    def compute_reprs(self) -> Tuple[Dict[str, Tensor]]:
+
+
+    def compute_reprs(self) -> List[GraphReprs]:
         """
         Compute the representations for a batch of KinodataDocked graphs, with a forward pass of the model.
         returns a list of GraphReprs objects for each graph in the batch.
@@ -183,14 +186,15 @@ class ProbingDataset:
                 """
                 graph_reprs_list = list(prior_readout)
                 
+                # process the representations per layer
                 for layer_name in intermediate_node_reprs.keys():
                     node_repr, batch_index = intermediate_node_reprs[layer_name]
                     edge_repr, edge_index = intermediate_edge_reprs[layer_name]
                     # process the representations
                     processed_reprs = self._process_reprs(node_repr, batch_index, edge_index, edge_repr)
                     # create a list of GraphReprs for each graph in the batch
-                    for i in range(len(batch_graph_idents)):
-                        ident = batch_graph_idents[i]
+                    for i, ident in enumerate(batch_graph_idents):
+                        # ident = batch_graph_idents[i]
                         graph = GraphReprs(ident)
                         graph.graph_repr['prior_readout'] = graph_reprs_list[i]
 
@@ -211,7 +215,8 @@ class ProbingDataset:
         return graph_list
 
 
-    
+    def get_graph_repr(self)
+
 
     def save_by_layer(self,
                 layer_name: str,
@@ -268,11 +273,11 @@ class ProbingDataset:
             if level == "graph":
                 y_list.append(y)
             elif level == "node":
-                num_nodes = g.node_repr[next(iter(g.node_repr))].shape[0]
-                y_list.append(np.full(num_nodes, y))
+                # y should be a 2D array with shape (NUM_GRAPHS, NUM_NODES)
+                pass 
             else:
                 raise ValueError("level must be 'graph' or 'node'")
 
-        return np.concatenate(y_list)
+        return np.array(y_list)
 
 
