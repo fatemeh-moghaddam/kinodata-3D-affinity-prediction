@@ -104,14 +104,20 @@ class ProbingDataset:
         return model.eval()
         
 
-    def __call__(self):
-        # return make_probing_x(self.data, self.gnn_model)
-        pass
+    def __call__(self) -> List[GraphReprs]:
+        """
+        Run the ProbingDataset to get a specific probing dataset.
+        This will load the model from a checkpoint, compute the representations, and return a list of GraphReprs objects.
+        """
+        # Do I separate the graph-level computation from the node-level computation, here?
+        return self.compute_reprs()
 
 
+    # ───────────────────────────────────────────────────────
+    # Unbatching functions, NOT TESTED YET
+    # ───────────────────────────────────────────────────────
 
-
-    def _process_reprs(self,
+    def _unbatch(self,
                         # graph: GraphReprs,
                         node_repr: Tensor,
                         batch_index: torch.LongTensor,
@@ -163,6 +169,9 @@ class ProbingDataset:
 
 
 
+    # ───────────────────────────────────────────────────────
+    # Main function/Pipeline
+    # ───────────────────────────────────────────────────────
 
     def compute_reprs(self) -> List[GraphReprs]:
         """
@@ -191,7 +200,17 @@ class ProbingDataset:
                     node_repr, batch_index = intermediate_node_reprs[layer_name]
                     edge_repr, edge_index = intermediate_edge_reprs[layer_name]
                     # process the representations
-                    processed_reprs = self._process_reprs(node_repr, batch_index, edge_index, edge_repr)
+                    if self.batch_size == 1:
+                        # Batch size is 1, so we can directly use the node_repr and edge_repr
+                        processed_reprs = (node_repr, edge_repr, edge_index)
+                    elif self.graph_level:
+                        # Graph level, so we just need to pool the node representations 
+                        # basically, just using the graph_pool here
+                        # and the edge_index is not needed
+                        processed_reprs = self._unbatch(node_repr, batch_index)
+                    else:
+                        # Unbatch
+                        processed_reprs = self._unbatch(node_repr, batch_index, edge_index, edge_repr)
                     # create a list of GraphReprs for each graph in the batch
                     for i, ident in enumerate(batch_graph_idents):
                         # ident = batch_graph_idents[i]
@@ -215,18 +234,10 @@ class ProbingDataset:
         return graph_list
 
 
-    def get_graph_repr(self)
 
-
-    def save_by_layer(self,
-                layer_name: str,
-                graphs: List['GraphReprs'],
-                ) -> None:
-        """
-        Save the list of reprs for a layer
-        """
-        pass
-
+    # ───────────────────────────────────────────────────────
+    # From GraphReprs list to Numpy
+    # ───────────────────────────────────────────────────────
 
     def get_X(self,
             graphs: List['GraphReprs'],
