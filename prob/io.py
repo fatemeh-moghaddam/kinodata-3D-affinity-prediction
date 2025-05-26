@@ -40,7 +40,7 @@ def init_experiment(root: Path,
 
 def _collect_dict(graphs: List[GraphReprs],
                     level: Level,
-                    layer_name: str
+                    layer: str
                     ) -> Dict[int, torch.Tensor]:
     """
     Collect {ident: tensor} from list of GraphReprs for a layer and level.
@@ -48,11 +48,11 @@ def _collect_dict(graphs: List[GraphReprs],
     out = {}
     for g in graphs:
         if level == "graph":
-            out[g.ident] = g.graph_repr[layer_name]
+            out[g.ident] = g.graph_repr[layer]
         elif level == "node":
-            out[g.ident] = g.node_repr[layer_name]
+            out[g.ident] = g.node_repr[layer]
         elif level == "edge":
-            out[g.ident] = g.edge_repr[layer_name]
+            out[g.ident] = g.edge_repr[layer]
         else:
             raise ValueError(f"Invalid level: {level}")
     return out
@@ -75,7 +75,9 @@ def save_layer(graphs: List[GraphReprs],
     return out_file
 
 
-def load_layer_dict(level: Level, layer: str, exp_dir: Path
+def load_layer_dict(exp_dir: Path, 
+                    level: Level, 
+                    layer: str, 
                     ) -> Dict[int, torch.Tensor]:
     """
     Load a layer-level tensor from a .pt file.
@@ -90,15 +92,15 @@ def load_layer_dict(level: Level, layer: str, exp_dir: Path
 
 def load_to_GraphReprs(
                         repr_dict: Dict[int, torch.Tensor],
+                        level: Level,
                         layer: str,
-                        level: Level
                     ) -> List[GraphReprs]:
     """
     Convert a layer-level dict {ident: tensor} to a list of GraphReprs.
     """
     graphs = []
     for ident, tensor in repr_dict.items():
-        g = GraphReprs(ident=ident)
+        g = GraphReprs(ident=int(ident))
         if level == "graph":
             g.graph_repr[layer] = tensor
         elif level == "node":
