@@ -24,3 +24,6 @@ dependencies = [
     "tqdm>=4.67.1",
     "wandb>=0.19.4",
 ]
+
+[build-system]
+requires = ["torch>=2.5.1"]
