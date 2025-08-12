@@ -52,7 +52,7 @@ class Config(dict):
         return super().__getattribute__(__name)
 
     def __setattr__(self, __name: str, __value: Any) -> None:
-        self[__name] == __value
+        self[__name] = __value
 
     def intersect(self, other: MutableMapping) -> "Config":
         return Config({k: v for k, v in self.items() if k in other})
