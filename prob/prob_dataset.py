@@ -73,6 +73,22 @@ def save_fold_tensor(tensor: torch.Tensor, output_dir: Path, filename: str):
     return out_file
 
 
+def dtype_resolve(dtype: torch.dtype | str | None) -> torch.dtype | None:
+    """
+    Resolve the dtype from a string or return None.
+    """
+    if isinstance(dtype, str):
+        _map = {"float32": torch.float32, "fp32": torch.float32,
+                "float16": torch.float16, "fp16": torch.float16,
+                "bfloat16": torch.bfloat16}
+        dtype_out = _map.get(dtype.lower(), None)
+    elif isinstance(dtype, torch.dtype):
+        dtype_out = dtype
+    else:
+        dtype_out = None
+    return dtype_out
+
+
 # A function instead of a class?
 def run_fold(ds: KinodataDocked,
              gnn_model: RegressionModel,
@@ -93,11 +109,15 @@ def run_fold(ds: KinodataDocked,
 
     fold_size = len(ds)
 
-    # Per-layer buffers as lists for concatenation; plus prior_readout
+    # Buffers for per-batch chunks, then concatenate at end
     layer_bufs: Dict[str, List[torch.Tensor]] = {}
     prior_buf: List[torch.Tensor] = []
     idents: List[int] = []
 
+    dtype_out = dtype_resolve(config.dtype_out)
+
+    gnn_model.eval()
+    device = next(gnn_model.parameters()).device
 
     loader = DataLoader(ds, batch_size=config.batch_size, shuffle=False)
 
@@ -107,6 +127,8 @@ def run_fold(ds: KinodataDocked,
             batch_idents = batch.ident.tolist()
             idents.extend(batch_idents)
 
+            # Move to model device
+            batch = batch.to(device)
 
             if not config.graph_level:
                 raise NotImplementedError("Only graph-level probing is implemented for now.")
@@ -120,21 +142,26 @@ def run_fold(ds: KinodataDocked,
             for layer_name, (node_repr, batch_index) in intermediate_node_reprs.items():
                 graph_repr = gnn_model.aggr(node_repr, batch_index).detach().cpu()
 
+                # Possible memory optimization
+                if dtype_out is not None:
+                    graph_repr = graph_repr.to(dtype_out)
+
                 # Create a buffer for each layer
                 if layer_name not in layer_bufs:
                     layer_bufs[layer_name] = []
 
-                # Possible memory optimization
-                if dtype_output := config.dtype:
-                    graph_repr = graph_repr.to(dtype_output)
-
                 layer_bufs[layer_name].append(graph_repr)
-                prior_buf.append(prior_readout.detach().cpu())
+
+            # Same stuff for prior readout once
+            pr = prior_readout.detach().cpu()
+            if dtype_out is not None:
+                pr = pr.to(dtype_out)
+            prior_buf.append(pr)
         
         # Concatenate per-layer and prior_readout
         layers_cat: Dict[str, torch.Tensor] = {}
         for layer_name, chunks in layer_bufs.items():
-            layers_cat[layer_name] = torch.cat(chunks, dim=0)  # [N_fold, d_k]
+            layers_cat[layer_name] = torch.cat(chunks, dim=0)  # [N_fold, d]
 
         prior_cat = torch.cat(prior_buf, dim=0)  # [N_fold, d_pr]
         ids_tensor = torch.tensor(idents, dtype=torch.long)
