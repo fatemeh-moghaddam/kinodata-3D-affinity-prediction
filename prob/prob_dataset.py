@@ -23,45 +23,46 @@ _DATA = Path.cwd().parent / "data"
 CPU_COUNT = 12
 
 # store a list of GraphReprs objects per layer
-# class GraphReprs:
-#     def __init__(self, ident: int):
-#         self.ident = ident
-#         self.node_repr = {}     # layer_name -> Tensor [num_nodes, hidden_dim]
-#         self.graph_repr = {}    # layer_name -> Tensor [hidden_dim]
-#         self.edge_repr = {}     # layer_name -> Tensor [num_edges, hidden_dim]
-#         self.edge_index = {}    # layer_name -> Tensor [2, num_nodes]
-#         self.properties = {}    # dict of properties
+class GraphReprs:
+    def __init__(self, ident: int):
+        self.ident = ident
+        self.node_repr = {}     # layer_name -> Tensor [num_nodes, hidden_dim]
+        self.graph_repr = {}    # layer_name -> Tensor [hidden_dim]
+        self.edge_repr = {}     # layer_name -> Tensor [num_edges, hidden_dim]
+        self.edge_index = {}    # layer_name -> Tensor [2, num_nodes]
+        self.properties = {}    # dict of properties
         
 
 
 
-#     def add_property(self, property_name: str, property_value: Any):
-#         if property_name in self.properties:
-#             raise ValueError(f"Property {property_name} already exists.")
-#         self.properties[property_name] = property_value
+    def add_property(self, property_name: str, property_value: Any):
+        if property_name in self.properties:
+            raise ValueError(f"Property {property_name} already exists.")
+        self.properties[property_name] = property_value
 
 
-#     @property
-#     def mw(self):
-#         """
-#         returns the molecular weight of the graph, using ident and a pre-computed mapping.
-#         """
-#         return self.properties["mw"]
+    @property
+    def mw(self):
+        """
+        returns the molecular weight of the graph, using ident and a pre-computed mapping.
+        """
+        return self.properties["mw"]
 
-#     @property
-#     def num_Hbonds(self):
-#         """
-#         Computes and returns the number of Hydrogen bonds in the graph.
-#         """
-#         return self.properties["num_Hbonds"]
-
-
-#     def get_property(self, name: str):
-#         return self.properties[name]
+    @property
+    def num_Hbonds(self):
+        """
+        Computes and returns the number of Hydrogen bonds in the graph.
+        """
+        return self.properties["num_Hbonds"]
 
 
-#     def __repr__(self):
-#         return f"<KinodataDocked ident= {self.ident}, layers={list(self.node_repr.keys())}>"
+    def get_property(self, name: str):
+        return self.properties[name]
+
+
+    def __repr__(self):
+        return f"<KinodataDocked ident= {self.ident}, layers={list(self.node_repr.keys())}>"
+
 
 def save_fold_tensor(tensor: torch.Tensor, output_dir: Path, filename: str):
     """
@@ -117,7 +118,11 @@ def run_fold(ds: KinodataDocked,
     dtype_out = dtype_resolve(config.dtype_out)
 
     gnn_model.eval()
-    device = next(gnn_model.parameters()).device
+    if config.device:
+        device = torch.device(config.device)
+    else:
+        device = torch.device("cpu")
+    gnn_model.to(device)
 
     loader = DataLoader(ds, batch_size=config.batch_size, shuffle=False)
 
@@ -158,7 +163,7 @@ def run_fold(ds: KinodataDocked,
                 pr = pr.to(dtype_out)
             prior_buf.append(pr)
         
-        # Concatenate per-layer and prior_readout
+        # Concatenate batches per-layer and prior_readout to save per fold
         layers_cat: Dict[str, torch.Tensor] = {}
         for layer_name, chunks in layer_bufs.items():
             layers_cat[layer_name] = torch.cat(chunks, dim=0)  # [N_fold, d]
