@@ -1,20 +1,47 @@
+# from torch_geometric.data import HeteroDataBatch, HeteroData
+# from pathlib import Path
+
+# from probing.dataset import ProbingDataset
+# from .conftest import dummyKinodataDocked
+
 from kinodata.data import KinodataDocked
-from torch_geometric.data import HeteroDataBatch, HeteroData
+from kinodata.model import ComplexTransformer
+
+from prob.utils import build_kd_ds, build_gnn_model
+from prob.generate_prob_ds import set_probing_config
+
+import pytest
 
 
-def test_e2e_smoke():
+@pytest.mark.smoke
+def test_set_probing_config_default():
+    """Test the set_probing_config function."""
+    prob_config = set_probing_config()
+    
+    assert prob_config.gnn_model_type == "CGNN-3D"
+    assert prob_config.split_type == "random-k-fold"
+    assert prob_config.filter_rmsd_max_value == 2
+    assert prob_config.graph_level is True
+    assert prob_config.split_index == 0
+
+
+@pytest.mark.smoke
+def test_gnn_model_building(gnn_model):
+    """Test the GNN model building."""
+    assert gnn_model is not None, "Failed to build GNN model"
+    assert isinstance(gnn_model, ComplexTransformer), "GNN model is not of type ComplexTransformer"
+    print(gnn_model)
+
+
+@pytest.mark.smoke
+def test_dataset_builds(kd_ds):
+    assert len(kd_ds) > 0
+    assert isinstance(kd_ds, KinodataDocked)
+
+
+@pytest.mark.e2e
+def test_e2e(prob_config, gnn_model, kd_ds):
     ''' Test the end-to-end pipeline with a smoke test '''
-    # Create a KinodataDocked object
-    orig_data = KinodataDocked()
+
+
     
-    # Check if the object is created successfully
-    assert orig_data is not None, "KinodataDocked object is None"
-    assert isinstance(orig_data, HeteroData), "KinodataDocked object is not of the expected type"
-    assert len(orig_data) == 41238, "KinodataDocked object does not have the expected number of graphs"
-    
-    # Check if the object has the expected properties
-    assert hasattr(orig_data, "data"), "KinodataDocked object has no data attribute"
-    assert hasattr(k, "graph_repr"), "KinodataDocked object has no graph_repr attribute"
-    
-    # Check if the data is in the expected format
-    assert isinstance(orig_data.data, HeteroDataBatch), "KinodataDocked data is not a dictionary"

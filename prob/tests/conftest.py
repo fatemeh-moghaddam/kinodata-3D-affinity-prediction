@@ -4,6 +4,10 @@ import pytest
 from pathlib import Path
 import os
 
+
+from prob.generate_prob_ds import set_probing_config
+from prob.utils import build_kd_ds, build_gnn_model
+
 from kinodata.data import KinodataDocked
 from kinodata.transform import TransformToComplexGraph
 from kinodata.model.complex_transformer import make_model, ComplexTransformer
@@ -38,6 +42,29 @@ def base_mw():
 def mw_step():
     return MW_STEP
 
+
+
+# Keep heavy things fast for smoke runs; let overrides come from kwargs/env
+@pytest.fixture(scope="session")
+def prob_config():
+    # You can pass kwargs here to make the test lighter/faster (e.g., tiny split)
+    cfg = set_probing_config()  # or set_probing_config(split_index=0, graph_level=True, ...)
+    # If split_file depends on other fields, ensure it’s computed here (if your function doesn’t already)
+    if getattr(cfg, "split_file", None) is None:
+        # compute it if your code normally does it later:
+        # cfg["split_file"] = get_split_file(cfg.split_type, cfg.split_index, cfg.filter_rmsd_max_value)
+        pass
+    return cfg
+
+@pytest.fixture(scope="session")
+def gnn_model(prob_config):
+    model = build_gnn_model(prob_config).eval()
+    return model
+
+@pytest.fixture(scope="session")
+def kd_ds(prob_config):
+    ds = build_kd_ds(split_path=prob_config.split_file)
+    return ds
 
 
 
