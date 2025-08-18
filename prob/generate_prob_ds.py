@@ -1,12 +1,16 @@
 import os
+from tqdm import tqdm
+
 import wandb
 import torch
+from torch.utils.data import DataLoader
 
 from kinodata.data.data_split import Split
 import kinodata.configuration as cfg
 
 from prob.utils import get_model_dir, get_model_ckpt, get_gnn_config_path, get_split_file, get_out_dir
 from prob.utils import build_kd_ds, build_gnn_model, load_config
+from prob.prob_dataset import run_fold
 
 '''
 This generate the prob dataset for a specific GNN model and split
@@ -21,25 +25,63 @@ To get the probing dataset, written:
         - model ckpt
         - splits (from processed data)
         - output_dir
-    3. Build model
-    4. Run model for each fold -> fold changes the dataset
-    5. Build dataset
-    6. Concatenate folds
+    fold changes the dataset and the model
+    3. Build dataset subset
+    4. Build model
+    5. Run model for each fold
+    X. Concatenate folds?
 '''
-if __name__ == "__main__":
+
+
+
+def set_probing_config(**kwargs) -> cfg.Config:
+    """ Set the probing configuration based on the provided arguments.
+    Args:
+        **kwargs: Keyword arguments to set the configuration.
+    Returns:
+        cfg.Config: The updated configuration object.
+    """
+    # defaults
+    defaults = dict(
+        gnn_model_type="CGNN-3D",
+        split_type="random-k-fold",
+        filter_rmsd_max_value=2,
+        graph_level=True,
+        split_index=0,
+        dtype_out=None,  # None means no dtype conversion
+    )
+
+    # validate kwargs
+    if kwargs.keys() - defaults.keys() != set():
+        raise ValueError(f"Invalid arguments: {kwargs.keys() - defaults.keys()}")
+
+    if "gnn_model_type" in kwargs:
+        assert kwargs["gnn_model_type"] in ["CGNN-3D", "CGNN", "DTI"], "Invalid GNN model type"
+    if "split_type" in kwargs:
+        assert kwargs["split_type"] in ["random-k-fold", "scaffold-k-fold", "pocket-k-fold"], "Invalid split type"
+    if "filter_rmsd_max_value" in kwargs:
+        assert kwargs["filter_rmsd_max_value"] in set({2, 4, 6, 2.00, 4.00, 6.00, None}), "Invalid RMSD threshold"
+    if "split_index" in kwargs:
+        assert isinstance(kwargs["split_index"], int) and kwargs["split_index"] >= 0, "Split index must be a non-negative integer"
+
+    # merge: kwargs overrides defaults
+    config_args = {**defaults, **kwargs}
+    # Initialize the config with the defaults and kwargs
+
+    cfg.register("probing_ds", **config_args)
     # I might need to set some of these with arguments later
-    # Initializing config, filling it up as we go
-    cfg.register("probing_ds",
-                 gnn_model_type="CGNN-3D",
-                 split_type="random-k-fold",
-                 filter_rmsd_max_value=2,
-                 graph_level=True,
-                 split_index=0
-                 ) 
+    # # Initializing config, filling it up as we go
+    # cfg.register("probing_ds",
+    #              gnn_model_type="CGNN-3D",
+    #              split_type="random-k-fold",
+    #              filter_rmsd_max_value=2,
+    #              graph_level=True,
+    #              split_index=0,
+    #              dtype_out=None,  # None means no dtype conversion
+    #              ) 
+
     prob_config = cfg.get("probing_ds").update_from_args() # this activates the argparse itself
 
-    # wandb.init(project="kinodata", config=prob_config)
-    wandb.init(mode="disabled")  # Disable W&B for now, can be enabled later
 
     # Get the addresses; each follows a pattern
     #   - model config and model ckpt follow: root/models/rmsd_cutoff_<rmsd_threshold>/<split_type>/<fold>/<model_name>
@@ -71,15 +113,49 @@ if __name__ == "__main__":
 
     # print(f"Model checkpoint: {prob_config.model_ckpt}")
     # print(f"Split file: {prob_config.split_file}")
-    # print(f"Output fold directory: {prob_config.output_fold_dir}")
+    print(f"Output fold directory: {prob_config.output_fold_dir}")
 
-    # ds = build_kd_ds(split_path=split_file_path)
-    # assert len(ds) > 0, "Prob dataset is empty"
+    return prob_config
+
+    
+
+
+
+
+
+if __name__ == "__main__":
+    # Set the random seed for reproducibility
+    torch.manual_seed(123)
+    # wandb.init(project="kinodata", config=prob_config)
+    wandb.init(mode="disabled")  # Disable W&B for now, can be enabled later
+    
+
+    prob_config = set_probing_config(
+        gnn_model_type="CGNN-3D",
+        split_type="random-k-fold",
+        filter_rmsd_max_value=2,
+        graph_level=True,
+        split_index=0
+    )
+
 
     gnn_model = build_gnn_model(prob_config).eval()
     assert gnn_model is not None, "Failed to build GNN model"
     # print(gnn_model)  # Set to eval mode
+    
+    
+    ds = build_kd_ds(split_path=prob_config.split_file)
+    assert len(ds) > 0, "Prob dataset is empty"
 
+    # run_fold(ds, gnn_model, prob_config)
 
-    # with torch.no_grad():
-    #     run_fold(gnn_model, ds, output_fold_dir)
+    # for fold in range(prob_config.num_folds):
+    #     # set the dir
+    #     prob_config.output_fold_dir = get_out_dir(prob_config.gnn_model_type,
+    #                           prob_config.split_type,
+    #                           fold)
+    #     # read the fold data
+    #     # To Do
+    #     run_fold(ds, gnn_model, prob_config)
+
+    # Concatenate folds?
