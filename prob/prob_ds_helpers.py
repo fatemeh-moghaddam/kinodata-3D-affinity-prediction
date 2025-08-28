@@ -26,17 +26,29 @@ _DATA = Path.cwd().parent / "data"
 CPU_COUNT = 12
 
 
-
-def save_fold_tensor(tensor: torch.Tensor, output_dir: Path, filename: str):
+##### These need to be moved to io at some point
+def save_out_tensor(tensor: torch.Tensor, output_dir: Path, filename: str, fold: int|None):
     """
     Save a tensor to a file in the output directory.
     """
+    if fold is not None:
+        output_dir = output_dir / str(fold)
     output_dir.mkdir(parents=True, exist_ok=True)
     out_file = output_dir / filename
     torch.save(tensor, out_file)
     return out_file
 
 
+def load_tensor(dir: Path, filename: str) -> torch.Tensor:
+    """
+    Load a tensor from a file in the directory.
+    """
+    tensor_file = dir / filename
+    assert tensor_file.exists(), f"File {tensor_file} does not exist."
+    return torch.load(tensor_file)
+#####
+
+#### Move?
 def dtype_resolve(dtype: torch.dtype | str | None) -> torch.dtype | None:
     """
     Resolve the dtype from a string or return None.
@@ -56,7 +68,7 @@ def dtype_resolve(dtype: torch.dtype | str | None) -> torch.dtype | None:
 # A function instead of a class
 def run_fold(ds: KinodataDocked,
              gnn_model: RegressionModel,
-             config: Config):
+             config: Config) -> None:
     """
     Run a fold on a given KinodataDocked split and write per-layer [graph-level for now]
     representations as a .pt file.
@@ -142,13 +154,25 @@ def run_fold(ds: KinodataDocked,
 
         # Save to disk separately
         for layer_name, layer_cat in layers_cat.items():
-            save_fold_tensor(layer_cat, config.output_fold_dir, f"{layer_name}_{config.split_index}.pt")
-        save_fold_tensor(prior_cat, config.output_fold_dir, f"prior_{config.split_index}.pt")
-        save_fold_tensor(ids_tensor, config.output_fold_dir, f"ids_{config.split_index}.pt")
+            save_out_tensor(layer_cat, config.output_dir, f"{layer_name}_{config.split_index}.pt", config.split_index)
+        save_out_tensor(prior_cat, config.output_dir, f"prior_{config.split_index}.pt", fold = config.split_index)
+        save_out_tensor(ids_tensor, config.output_dir, f"ids_{config.split_index}.pt", fold = config.split_index)
 
     return
 
 
+
+def aggregate_fold(config: Config) -> None:
+    # TODO: 
+    # looping over folds and layers. For each layer, loop over the folds, 
+    # go to the fold directory and load the tensors and concatenate them
+    # write the concatenated tensor to disk, in the parent of folds
+    # access the output directory via config
+
+    # I'm assuming this directory is: 
+    output_dir = config.output_dir
+
+    return
 
 ########################### DEPRECATED ###########################
 

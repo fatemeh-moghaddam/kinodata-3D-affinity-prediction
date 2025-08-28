@@ -47,7 +47,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         split_type="random-k-fold",
         filter_rmsd_max_value=2,
         graph_level=True,
-        split_index=0,
+        split_index=None,
         dtype_out=None,  # None means no dtype conversion
     )
 
@@ -69,16 +69,6 @@ def set_probing_config(**kwargs) -> cfg.Config:
     # Initialize the config with the defaults and kwargs
 
     cfg.register("probing_ds", **config_args)
-    # I might need to set some of these with arguments later
-    # # Initializing config, filling it up as we go
-    # cfg.register("probing_ds",
-    #              gnn_model_type="CGNN-3D",
-    #              split_type="random-k-fold",
-    #              filter_rmsd_max_value=2,
-    #              graph_level=True,
-    #              split_index=0,
-    #              dtype_out=None,  # None means no dtype conversion
-    #              ) 
 
     prob_config = cfg.get("probing_ds").update_from_args() # this activates the argparse itself
 
@@ -96,7 +86,9 @@ def set_probing_config(**kwargs) -> cfg.Config:
     split_file_path = get_split_file(prob_config.split_type,
                                  prob_config.split_index,
                                  prob_config.filter_rmsd_max_value)
-    output_fold_dir = get_out_dir(prob_config.gnn_model_type,
+    
+    ##### do I change this to output_dir?
+    output_dir = get_out_dir(prob_config.gnn_model_type,
                               prob_config.split_type,
                               prob_config.split_index)
     
@@ -107,13 +99,13 @@ def set_probing_config(**kwargs) -> cfg.Config:
         {  **model_config,
             'model_ckpt': model_ckpt,
             'split_file': split_file_path,
-            'output_fold_dir': output_fold_dir
+            'output_dir': output_dir
         }, allow_duplicates=True
     )
 
     # print(f"Model checkpoint: {prob_config.model_ckpt}")
     # print(f"Split file: {prob_config.split_file}")
-    print(f"Output fold directory: {prob_config.output_fold_dir}")
+    print(f"Output fold directory: {prob_config.output_dir}")
 
     return prob_config
 
@@ -129,14 +121,16 @@ if __name__ == "__main__":
     # wandb.init(project="kinodata", config=prob_config)
     wandb.init(mode="disabled")  # Disable W&B for now, can be enabled later
 
+    # init config
+    prob_config = set_probing_config() # all else is taken care of by defaults
+
     for fold in range(5):
-
-        prob_config = set_probing_config(split_index=fold) # all else is taken care of by defaults 
-
+        # prob_config.update({'split_index': fold})
+        prob_config.split_index = fold
+        
         gnn_model = build_gnn_model(prob_config).eval()
         assert gnn_model is not None, "Failed to build GNN model"
         # print(gnn_model)  # Set to eval mode
-        
         
         ds = build_kd_ds(split_path=prob_config.split_file)
         assert len(ds) > 0, "Prob dataset is empty"

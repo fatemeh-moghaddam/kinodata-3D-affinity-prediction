@@ -77,10 +77,9 @@ def get_split_file(
 def get_out_dir(
         gnn_model_type: str,
        split_type: str,
-       split_fold: int,
+       split_fold: int | None,
        *,
-       root: Path = _ROOT,
-       output_type: Literal['fold','aggregate'] = 'fold'
+       root: Path = _ROOT
     ) -> Path:
     """
     This is the output directory per fold. 
@@ -90,7 +89,7 @@ def get_out_dir(
     p = root / "data/probing" / gnn_model_type / split_type 
     if not p.exists():
         p.mkdir(parents=True, exist_ok=True)
-    return p / str(split_fold) if output_type == 'fold' else p
+    return p / str(split_fold) if split_fold else p
 
 
 # ─────────────────────────────────────────────────────────────
