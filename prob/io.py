@@ -15,7 +15,8 @@ Level = Literal["graph", "node", "edge"]
 # Directory setup
 # ─────────────────────────────────────────────────────────────
 def _ensure_dir(p: Path) -> Path:
-    p.mkdir(parents=True, exist_ok=True)
+    if not p.exists():
+        p.mkdir(parents=True, exist_ok=True)
     return p
 
 def init_experiment(root: Path, 
@@ -24,7 +25,7 @@ def init_experiment(root: Path,
                     ) -> Path:
     """
     Create the experiment directory and write meta.json
-        exp_id is made with model+target e.g. cgnn256_rmsd2_mw
+        exp_id is made with model e.g. cgnn256_rmsd2
     Returns the Path to the experiment root.
     """
     exp_dir = _ensure_dir(root / exp_id)

@@ -179,7 +179,7 @@ def run_fold(ds: KinodataDocked,
 
         # Save to disk separately
         for layer_name, layer_cat in layers_cat.items():
-            save_fold_tensor(layer_cat, config.output_fold_dir, f"layer_{layer_name}_{config.split_index}.pt")
+            save_fold_tensor(layer_cat, config.output_fold_dir, f"{layer_name}_{config.split_index}.pt")
         save_fold_tensor(prior_cat, config.output_fold_dir, f"prior_{config.split_index}.pt")
         save_fold_tensor(ids_tensor, config.output_fold_dir, f"ids_{config.split_index}.pt")
 

@@ -128,34 +128,21 @@ if __name__ == "__main__":
     torch.manual_seed(123)
     # wandb.init(project="kinodata", config=prob_config)
     wandb.init(mode="disabled")  # Disable W&B for now, can be enabled later
+
+    for fold in range(5):
+
+        prob_config = set_probing_config(split_index=fold) # all else is taken care of by defaults 
+
+        gnn_model = build_gnn_model(prob_config).eval()
+        assert gnn_model is not None, "Failed to build GNN model"
+        # print(gnn_model)  # Set to eval mode
+        
+        
+        ds = build_kd_ds(split_path=prob_config.split_file)
+        assert len(ds) > 0, "Prob dataset is empty"
+
+        run_fold(ds, gnn_model, prob_config)
+
+
+    # TODO: Implement functionality to save config and concatenate fold results
     
-
-    prob_config = set_probing_config(
-        gnn_model_type="CGNN-3D",
-        split_type="random-k-fold",
-        filter_rmsd_max_value=2,
-        graph_level=True,
-        split_index=0
-    )
-
-
-    gnn_model = build_gnn_model(prob_config).eval()
-    assert gnn_model is not None, "Failed to build GNN model"
-    # print(gnn_model)  # Set to eval mode
-    
-    
-    ds = build_kd_ds(split_path=prob_config.split_file)
-    assert len(ds) > 0, "Prob dataset is empty"
-
-    # run_fold(ds, gnn_model, prob_config)
-
-    # for fold in range(prob_config.num_folds):
-    #     # set the dir
-    #     prob_config.output_fold_dir = get_out_dir(prob_config.gnn_model_type,
-    #                           prob_config.split_type,
-    #                           fold)
-    #     # read the fold data
-    #     # To Do
-    #     run_fold(ds, gnn_model, prob_config)
-
-    # Concatenate folds?

@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import List, Literal, Any, Union
 import json
 import colorama
+from tqdm import tqdm
 
 import torch
 
@@ -93,6 +94,31 @@ def get_out_dir(
 
 
 # ─────────────────────────────────────────────────────────────
+# Load/Save/Concatenate helpers
+# ─────────────────────────────────────────────────────────────
+# Load the model config from a JSON file
+# This is needed instead of cfg.update_from_file() because JSON files have a different structure
+# 
+def load_config(config_file: Path) -> dict[str, Any]:
+    with open(config_file, "r") as f_config:
+        config = json.load(f_config)
+    config = {str(key): value["value"] for key, value in config.items()}
+    # cfg.Config is a subclass of dict, it's a dictionary with some extra methods
+    # it is used when make_model is called
+    return cfg.Config(config) 
+
+
+
+
+def load_model_from_checkpoint(model: RegressionModel, model_ckpt: str) -> RegressionModel:
+    ckp = torch.load(model_ckpt, map_location="cpu")
+    assert isinstance(model, RegressionModel)
+    model.load_state_dict(ckp["state_dict"])
+    return model
+
+
+
+# ─────────────────────────────────────────────────────────────
 # Builders
 # ─────────────────────────────────────────────────────────────
 
@@ -120,30 +146,6 @@ def build_kd_ds(split_path: Union[str, Path, None] = None) -> KinodataDocked:
 
 
 
-
-# Load the model config from a JSON file
-# This is needed instead of cfg.update_from_file() because JSON files have a different structure
-# 
-def load_config(config_file: Path) -> dict[str, Any]:
-    with open(config_file, "r") as f_config:
-        config = json.load(f_config)
-    config = {str(key): value["value"] for key, value in config.items()}
-    # cfg.Config is a subclass of dict, it's a dictionary with some extra methods
-    # it is used when make_model is called
-    return cfg.Config(config) 
-
-
-
-
-def load_model_from_checkpoint(model: RegressionModel, model_ckpt: str) -> RegressionModel:
-    ckp = torch.load(model_ckpt, map_location="cpu")
-    assert isinstance(model, RegressionModel)
-    model.load_state_dict(ckp["state_dict"])
-    return model
-
-
-
-
 def build_gnn_model(cfg: cfg.Config) -> RegressionModel:
     """
     Build and load a GNN model based on the provided configuration: model type and model checkpoint.
@@ -163,7 +165,6 @@ def build_gnn_model(cfg: cfg.Config) -> RegressionModel:
         raise ValueError(f"Model checkpoint not found for GNN type: {gnn_type}")
     loaded_gnn = load_model_from_checkpoint(gnn, gnn_ckpt)
     return loaded_gnn
-
 
 
 # ─────────────────────────────────────────────────────────────
