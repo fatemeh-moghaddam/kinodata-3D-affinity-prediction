@@ -10,7 +10,7 @@ import kinodata.configuration as cfg
 
 from prob.utils import get_model_dir, get_model_ckpt, get_gnn_config_path, get_split_file, get_out_dir
 from prob.utils import build_kd_ds, build_gnn_model, load_config
-from prob.prob_dataset import run_fold
+from prob.prob_ds_helpers import run_fold, aggregate_folds
 
 '''
 This generate the prob dataset for a specific GNN model and split
@@ -47,7 +47,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         split_type="random-k-fold",
         filter_rmsd_max_value=2,
         graph_level=True,
-        split_index=None,
+        split_index=0,
         dtype_out=None,  # None means no dtype conversion
     )
 
@@ -105,7 +105,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
 
     # print(f"Model checkpoint: {prob_config.model_ckpt}")
     # print(f"Split file: {prob_config.split_file}")
-    print(f"Output fold directory: {prob_config.output_dir}")
+    print(f"Output directory: {prob_config.output_dir}")
 
     return prob_config
 
@@ -121,13 +121,13 @@ if __name__ == "__main__":
     # wandb.init(project="kinodata", config=prob_config)
     wandb.init(mode="disabled")  # Disable W&B for now, can be enabled later
 
-    # init config
-    prob_config = set_probing_config() # all else is taken care of by defaults
 
     for fold in range(5):
         # prob_config.update({'split_index': fold})
-        prob_config.split_index = fold
-        
+        # prob_config.split_index = fold
+        # need to have fold index for model ckpt
+        prob_config = set_probing_config(split_index = fold)
+
         gnn_model = build_gnn_model(prob_config).eval()
         assert gnn_model is not None, "Failed to build GNN model"
         # print(gnn_model)  # Set to eval mode
@@ -137,6 +137,9 @@ if __name__ == "__main__":
 
         run_fold(ds, gnn_model, prob_config)
 
+    prob_config.split_index = None
 
-    # TODO: Implement functionality to save config and concatenate fold results
-    
+    # Aggregate folds for each layer
+    for layer_name in ["layer_1", "layer_2", "layer_3", "prior_readout"]:
+        aggregate_folds(prob_config, layer_name)
+
