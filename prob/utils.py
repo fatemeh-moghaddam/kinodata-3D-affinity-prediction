@@ -5,6 +5,7 @@ from typing import List, Literal, Any, Union
 import json
 import colorama
 from tqdm import tqdm
+import gc
 
 import torch
 
@@ -16,7 +17,7 @@ from kinodata.model.complex_transformer import make_model as make_complex_transf
 from kinodata.model.dti import make_model as make_dti_baseline
 import kinodata.configuration as cfg
 
-from prob.prob_dataset import GraphReprs
+
 
 
 # _ROOT = Path(__file__).resolve().parent.parent
@@ -141,6 +142,10 @@ def build_kd_ds(split_path: Union[str, Path, None] = None) -> KinodataDocked:
                       use_multiprocessing=True,
                       num_processes= os.cpu_count())
     ds = full_ds[[*split.test_split, *split.val_split]]
+
+    del full_ds  # free memory
+    gc.collect()
+    
     return ds
 
 
