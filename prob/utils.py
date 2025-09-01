@@ -87,11 +87,12 @@ def get_out_dir(
     The concatenated one would be in the parent directory of this.
     And the layered separation would be in the naming.
     """
-    p = root / "data/probing" / gnn_model_type / split_type 
+    p = root / "data/probing" / gnn_model_type / split_type
+    if split_fold:
+        p = p / str(split_fold)
     if not p.exists():
         p.mkdir(parents=True, exist_ok=True)
-    return p / str(split_fold) if split_fold else p
-
+    return p
 
 # ─────────────────────────────────────────────────────────────
 # Load/Save/Concatenate helpers
