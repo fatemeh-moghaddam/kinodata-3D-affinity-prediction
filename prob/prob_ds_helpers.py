@@ -86,7 +86,7 @@ def run_fold(ds: KinodataDocked,
 
     # Buffers for per-batch chunks, then concatenate at end
     layer_bufs: Dict[str, List[torch.Tensor]] = {}
-    prior_buf: List[torch.Tensor] = []
+    # prior_buf: List[torch.Tensor] = []
     idents: List[int] = []
 
     dtype_out = dtype_resolve(config.dtype_out)
@@ -132,29 +132,29 @@ def run_fold(ds: KinodataDocked,
                 layer_bufs[layer_name].append(graph_repr)
 
             # Same stuff for prior readout once
-            pr = prior_readout.detach().cpu()
-            if dtype_out is not None:
-                pr = pr.to(dtype_out)
-            prior_buf.append(pr)
+            # pr = prior_readout.detach().cpu()
+            # if dtype_out is not None:
+            #     pr = pr.to(dtype_out)
+            # prior_buf.append(pr)
         
         # Concatenate batches per-layer and prior_readout to save per fold
         layers_cat: Dict[str, torch.Tensor] = {}
         for layer_name, chunks in layer_bufs.items():
             layers_cat[layer_name] = torch.cat(chunks, dim=0)  # [N_fold, d]
 
-        prior_cat = torch.cat(prior_buf, dim=0)  # [N_fold, d_pr]
+        # prior_cat = torch.cat(prior_buf, dim=0)  # [N_fold, d_pr]
         ids_tensor = torch.tensor(idents, dtype=torch.long)
 
         # Checks
         assert ids_tensor.shape[0] == fold_size, "IDs tensor size mismatch with fold size"
-        assert prior_cat.shape[0] == fold_size, "Prior tensor size mismatch with fold size"
+        # assert prior_cat.shape[0] == fold_size, "Prior tensor size mismatch with fold size"
         for layer_name, layer_cat in layers_cat.items():
             assert layer_cat.shape[0] == fold_size, f"Layer {layer_name} tensor size mismatch with fold size"
 
         # Save to disk separately
         for layer_name, layer_cat in layers_cat.items():
             save_out_tensor(layer_cat, config.output_dir / str(config.split_index), f"{layer_name}_{config.split_index}.pt")
-        save_out_tensor(prior_cat, config.output_dir / str(config.split_index), f"prior_{config.split_index}.pt")
+        # save_out_tensor(prior_cat, config.output_dir / str(config.split_index), f"prior_{config.split_index}.pt")
         save_out_tensor(ids_tensor, config.output_dir / str(config.split_index), f"ids_{config.split_index}.pt")
 
     return
