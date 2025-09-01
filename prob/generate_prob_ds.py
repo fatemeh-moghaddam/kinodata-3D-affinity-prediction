@@ -3,9 +3,7 @@ from tqdm import tqdm
 
 import wandb
 import torch
-from torch.utils.data import DataLoader
 
-from kinodata.data.data_split import Split
 import kinodata.configuration as cfg
 
 from prob.utils import get_model_dir, get_model_ckpt, get_gnn_config_path, get_split_file, get_out_dir
@@ -124,8 +122,9 @@ if __name__ == "__main__":
     # wandb.init(project="kinodata", config=prob_config)
     wandb.init(mode="disabled")  # Disable W&B for now, can be enabled later
 
+    k_fold = 5  # for now, just hardcoding this
 
-    for fold in range(5):
+    for fold in range(k_fold):
         # prob_config.update({'split_index': fold})
         # prob_config.split_index = fold
         # need to have fold index for model ckpt
@@ -141,8 +140,10 @@ if __name__ == "__main__":
         run_fold(ds, gnn_model, prob_config)
 
     prob_config.split_index = None
+    num_layers = prob_config.get('num_attention_blocks', 3)
 
     # Aggregate folds for each layer
-    for layer_name in ["layer_1", "layer_2", "layer_3", "prior_readout"]:
+    for i in range(num_layers):
+        layer_name = f"layer_{i+1}"
         aggregate_folds(prob_config, layer_name)
 
