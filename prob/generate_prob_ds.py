@@ -90,8 +90,9 @@ def set_probing_config(**kwargs) -> cfg.Config:
     ##### do I change this to output_dir?
     output_dir = get_out_dir(prob_config.gnn_model_type,
                               prob_config.split_type,
-                              prob_config.split_index)
+                              split_fold=None)
     
+
     # Update the config from config file for GNN settings
     # prob_config.update_from_file(get_gnn_config_path(model_dir))  This doesn't work for json, only for yaml
     model_config = load_config(get_gnn_config_path(model_dir))
@@ -99,6 +100,8 @@ def set_probing_config(**kwargs) -> cfg.Config:
         {  **model_config,
             'model_ckpt': model_ckpt,
             'split_file': split_file_path,
+            # 'output_fold_dir': output_fold_dir,
+            # 'output_agg_dir': output_agg_dir
             'output_dir': output_dir
         }, allow_duplicates=True
     )

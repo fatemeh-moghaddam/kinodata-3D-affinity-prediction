@@ -27,25 +27,24 @@ CPU_COUNT = 12
 
 
 ##### These need to be moved to io at some point
-def save_out_tensor(tensor: torch.Tensor, output_dir: Path, filename: str, fold: int|None):
+def save_out_tensor(tensor: torch.Tensor, output_dir: Path, filename: str):
     """
     Save a tensor to a file in the output directory.
     """
-    if fold is not None:
-        output_dir = output_dir / str(fold)
     output_dir.mkdir(parents=True, exist_ok=True)
     out_file = output_dir / filename
     torch.save(tensor, out_file)
     return out_file
 
+def load_out_tensor(output_dir: Path, filename: str) -> torch.Tensor:
+    """
+    Load a tensor from a file in the output directory.
+    """
+    out_file = output_dir / filename
+    if not out_file.exists():
+        raise FileNotFoundError(f"File {out_file} does not exist.")
+    return torch.load(out_file)
 
-def load_tensor(dir: Path, filename: str) -> torch.Tensor:
-    """
-    Load a tensor from a file in the directory.
-    """
-    tensor_file = dir / filename
-    assert tensor_file.exists(), f"File {tensor_file} does not exist."
-    return torch.load(tensor_file)
 #####
 
 #### Move?
@@ -71,7 +70,7 @@ def run_fold(ds: KinodataDocked,
              config: Config) -> None:
     """
     Run a fold on a given KinodataDocked split and write per-layer [graph-level for now]
-    representations as a .pt file.
+    representations as a .pt file named as: {layer_name}_{split_index}.pt.
 
     Expects in `config`:
       - batch_size: int
@@ -154,23 +153,50 @@ def run_fold(ds: KinodataDocked,
 
         # Save to disk separately
         for layer_name, layer_cat in layers_cat.items():
-            save_out_tensor(layer_cat, config.output_dir, f"{layer_name}_{config.split_index}.pt", config.split_index)
-        save_out_tensor(prior_cat, config.output_dir, f"prior_{config.split_index}.pt", fold = config.split_index)
-        save_out_tensor(ids_tensor, config.output_dir, f"ids_{config.split_index}.pt", fold = config.split_index)
+            save_out_tensor(layer_cat, config.output_dir / str(config.split_index), f"{layer_name}_{config.split_index}.pt")
+        save_out_tensor(prior_cat, config.output_dir / str(config.split_index), f"prior_{config.split_index}.pt")
+        save_out_tensor(ids_tensor, config.output_dir / str(config.split_index), f"ids_{config.split_index}.pt")
 
     return
 
 
 
-def aggregate_fold(config: Config) -> None:
-    # TODO: 
-    # looping over folds and layers. For each layer, loop over the folds, 
-    # go to the fold directory and load the tensors and concatenate them
-    # write the concatenated tensor to disk, in the parent of folds
-    # access the output directory via config
-
-    # I'm assuming this directory is: 
+def aggregate_folds(config: Config, layer_name: str) -> None:
+    '''
+    Aggregate tensors from all folds for a specific layer, and writes them to config.output_dir.
+    out:
+        Saved aggregated tensors.
+        The naming pattern of the saved tensors is: {layer_name}.pt
+    '''
+    # I'm assuming this directory is the parent of the fold directories
     output_dir = config.output_dir
+    # TODO: check if this is the correct directory
+
+    k_fold = config.get('k_fold', 5)
+
+    fold_tensors: List[torch.Tensor] = []
+    
+
+    # Load tensors from each fold
+    for fold in range(k_fold):  # Assuming 5 folds
+        fold_dir = output_dir / str(fold)
+        tensor_path = fold_dir / f"{layer_name}_{fold}.pt"
+        if tensor_path.exists():
+            fold_tensors.append(torch.load(tensor_path))
+        else:
+            print(f"Warning: {tensor_path} does not exist.")
+
+    if not fold_tensors:
+        print("No tensors found for aggregation.")
+        return
+
+    # Concatenate tensors
+    aggregated_tensor = torch.cat(fold_tensors, dim=0)
+
+    # Save aggregated tensor
+    aggregated_path = output_dir / f"{layer_name}.pt"
+    torch.save(aggregated_tensor, aggregated_path)
+    print(f"Aggregated tensor saved to {aggregated_path}")
 
     return
 
