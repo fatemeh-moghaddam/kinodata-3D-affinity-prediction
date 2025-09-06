@@ -21,7 +21,7 @@ import kinodata.configuration as cfg
 
 
 # _ROOT = Path(__file__).resolve().parent.parent
-_ROOT = Path(__file__).resolve().parents[1]
+_ROOT = Path(os.environ.get("DATA_ROOT", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
 
 
 # ─────────────────────────────────────────────────────────────
@@ -41,8 +41,10 @@ def get_model_dir(
 
 
 def get_model_ckpt(model_dir: Path) -> Path:
-    print()
-    return list(model_dir.glob("**/*.ckpt"))[0]
+    cks = list(model_dir.glob("**/*.ckpt"))
+    if not cks:
+        raise FileNotFoundError(f"No .ckpt found under {model_dir}")
+    return cks[0]
 
 
 def get_gnn_config_path(model_dir: Path) -> Path:
@@ -88,10 +90,9 @@ def get_out_dir(
     And the layered separation would be in the naming.
     """
     p = root / "data/probing" / gnn_model_type / split_type
-    if split_fold:
+    if split_fold is not None:   # <- avoids dropping fold==0
         p = p / str(split_fold)
-    if not p.exists():
-        p.mkdir(parents=True, exist_ok=True)
+    p.mkdir(parents=True, exist_ok=True)
     return p
 
 # ─────────────────────────────────────────────────────────────
