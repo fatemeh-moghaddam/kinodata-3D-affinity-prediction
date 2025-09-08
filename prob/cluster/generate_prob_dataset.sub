@@ -1,7 +1,7 @@
 universe = docker
 docker_image = gjoschka/kinodata3d-b0:2.3.0-cuda12.1
 executable = generate_prob_dataset.sh
-arguments = $(script) --split_type $(split) --rmsd_cutoff $(rmsd) --gnn_model_type $(model)
+arguments = $(script) --split_type $(split) --rmsd_cutoff $(rmsd) --gnn_model_type $(gnn)
 output = gen_prob_ds.$(ClusterId).$(ProcId).out
 error = gen_prob_ds.$(ClusterId).$(ProcId).err
 log = gen_prob_ds.$(ClusterId).log
