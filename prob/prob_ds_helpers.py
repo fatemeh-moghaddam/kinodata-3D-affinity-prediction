@@ -19,10 +19,14 @@ from typing import Any, List, Dict, Tuple, Literal
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
+import colorama
 
 
 
-_DATA = Path.cwd().parent / "data"
+colorama.init(autoreset=True)
+
+_ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
+_DATA = _ROOT / "data"
 CPU_COUNT = 12
 
 
@@ -187,7 +191,7 @@ def aggregate_folds(config: Config, layer_name: str) -> None:
             print(f"Warning: {tensor_path} does not exist.")
 
     if not fold_tensors:
-        print("No tensors found for aggregation.")
+        print(colorama.Fore.RED + "No tensors found for aggregation." + colorama.Style.RESET_ALL)
         return
 
     # Concatenate tensors
@@ -197,6 +201,34 @@ def aggregate_folds(config: Config, layer_name: str) -> None:
     aggregated_path = output_dir / f"{layer_name}.pt"
     torch.save(aggregated_tensor, aggregated_path)
     print(f"Aggregated tensor saved to {aggregated_path}")
+
+    return
+
+
+def aggregate_ids(config: Config) -> None:
+    """
+    Aggregate ids_<fold>.pt across all folds and save to config.output_dir/ids.pt
+    """
+    output_dir = config.output_dir
+    k_fold = config.get('k_fold', 5)
+
+    id_tensors: List[torch.Tensor] = []
+    for fold in range(k_fold):
+        fold_dir = output_dir / str(fold)
+        ids_path = fold_dir / f"ids_{fold}.pt"
+        if ids_path.exists():
+            id_tensors.append(torch.load(ids_path))
+        else:
+            print(f"Warning: {ids_path} does not exist.")
+
+    if not id_tensors:
+        print(colorama.Fore.RED + "No ids found for aggregation." + colorama.Style.RESET_ALL)
+        return
+
+    aggregated_ids = torch.cat(id_tensors, dim=0)
+    aggregated_path = output_dir / "ids.pt"
+    torch.save(aggregated_ids, aggregated_path)
+    print(f"Aggregated ids saved to {aggregated_path}")
 
     return
 

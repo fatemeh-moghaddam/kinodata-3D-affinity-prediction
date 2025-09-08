@@ -8,7 +8,7 @@ import kinodata.configuration as cfg
 
 from prob.utils import get_model_dir, get_model_ckpt, get_gnn_config_path, get_split_file, get_out_dir
 from prob.utils import build_kd_ds, build_gnn_model, load_config
-from prob.prob_ds_helpers import run_fold, aggregate_folds
+from prob.prob_ds_helpers import run_fold, aggregate_folds, aggregate_ids
 
 '''
 This generate the prob dataset for a specific GNN model and split
@@ -146,4 +146,7 @@ if __name__ == "__main__":
     for i in range(num_layers):
         layer_name = f"layer_{i+1}"
         aggregate_folds(prob_config, layer_name)
+
+    # Aggregate ids across folds for downstream mapping
+    aggregate_ids(prob_config)
 

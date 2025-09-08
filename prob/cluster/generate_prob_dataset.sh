@@ -1,5 +1,3 @@
-set -euo pipefail
-
 # Run entirely in HOME; download dataset/models as needed to match utils.py expectations
 PROJECT_NAME="kinodata-3D-affinity-prediction"
 HOME_PROJ_DIR="${HOME}/${PROJECT_NAME}"
@@ -11,6 +9,7 @@ if [ ! -d "data/processed" ]; then
     wget -O downloads/kinodata3d_processed.zip "https://zenodo.org/records/10886085/files/kinodata3d_processed.zip?download=1" \
     || curl -L -o downloads/kinodata3d_processed.zip "https://zenodo.org/records/10886085/files/kinodata3d_processed.zip?download=1"
     unzip -o downloads/kinodata3d_processed.zip
+    rm -f downloads/kinodata3d_processed.zip   # <--- cleanup
 fi
 
 # Download and extract pretrained models if missing (expects models/... with .ckpt and config.json)
@@ -19,6 +18,7 @@ if [ ! -d "models" ]; then
     wget -O downloads/kinodata3d_models.zip "https://zenodo.org/records/10886085/files/kinodata3d_models.zip?download=1" \
     || curl -L -o downloads/kinodata3d_models.zip "https://zenodo.org/records/10886085/files/kinodata3d_models.zip?download=1"
     unzip -o downloads/kinodata3d_models.zip
+    rm -f downloads/kinodata3d_models.zip   # <--- cleanup
 fi
 
-python3 prob/$1.py --split_type $2 --filter_rmsd_max_value $3 --gnn_model_type $4
+python3 prob/$1.py --split_type $2 --rmsd_cutoff $3 --gnn_model_type $4

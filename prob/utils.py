@@ -21,7 +21,7 @@ import kinodata.configuration as cfg
 
 
 # _ROOT = Path(__file__).resolve().parent.parent
-_ROOT = Path(os.environ.get("DATA_ROOT", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
+_ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
 
 
 # ─────────────────────────────────────────────────────────────
