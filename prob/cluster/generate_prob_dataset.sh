@@ -21,4 +21,4 @@ if [ ! -d "models" ]; then
     rm -f downloads/kinodata3d_models.zip   # <--- cleanup
 fi
 
-python3 prob/$1.py --split_type $2 --rmsd_cutoff $3 --gnn_model_type $4
+python3 $HOME_PROJ_DIR/prob/$1.py --split_type $2 --rmsd_cutoff $3 --gnn_model_type $4
