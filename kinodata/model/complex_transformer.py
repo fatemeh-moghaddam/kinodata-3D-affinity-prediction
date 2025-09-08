@@ -247,7 +247,7 @@ class ComplexTransformer(RegressionModel):
 
         graph_repr = self.aggr(node_repr, node_store.batch)
         if self.prob:
-            return self.out(graph_repr), intermediate_node_reprs, intermediate_edge_reprs
+            return self.out(graph_repr), intermediate_node_reprs, intermediate_edge_reprs, graph_repr
         return self.out(graph_repr)
 
 
