@@ -1,7 +1,7 @@
 universe = docker
 docker_image = gjoschka/massspec_with_wandb
 executable = generate_prob_dataset.sh
-arguments = $(script) --split_type $(split) --filter_rmsd_max_value $(rmsd) --config $(model)
+arguments = $(script) --split_type $(split) --filter_rmsd_max_value $(rmsd) --gnn_model_type $(model)
 output = gen_prob_ds.$(ClusterId).$(ProcId).out
 error = gen_prob_ds.$(ClusterId).$(ProcId).err
 log = gen_prob_ds.$(ClusterId).log
@@ -11,11 +11,7 @@ request_GPUs = 1
 request_CPUs = 32
 request_memory = 128G
 requirements = UidDomain == "cs.uni-saarland.de"
-+WantGPUHomeMounted = true
-queue model, rmsd, script, split from (
-   CGNN-3D, 2, generate_prob_ds, random-k-fold
-   CGNN-3D, 2, generate_prob_ds, scaffold-k-fold
-)
++WantScratchMounted = true
 queue script, split, rmsd, gnn from (
    generate_prob_ds, random-k-fold, 2, CGNN-3D,
    generate_prob_ds, scaffold-k-fold, 2, CGNN-3D,
