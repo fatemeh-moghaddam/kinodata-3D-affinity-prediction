@@ -71,7 +71,7 @@ def get_split_file(
         p = p / split_type
     else:
         p = p / f"filter_predicted_rmsd_le{rmsd_threshold}.00" / split_type
-    p = p / f"{split_fold + 1}_5.csv"
+    p = p / f"{split_fold + 1}:5.csv"
     if not p.exists():
         raise FileNotFoundError(f"Split file not found: {p}")
     return p
@@ -235,7 +235,7 @@ def get_np_y(
 # ─────────────────────────────────────────────────────────────
 
 # if __name__ == "__main__":
-#     ds = build_kd_ds(split_path="/home/fatemeh/thesis/kinodata-3D-affinity-prediction/data/processed/filter_predicted_rmsd_le2.00/random-k-fold/1_5.csv")
-#     # ds = build_kd_ds(split_path=Path("data/processed/random-k-fold/1_5.csv"))
+#     ds = build_kd_ds(split_path="/home/fatemeh/thesis/kinodata-3D-affinity-prediction/data/processed/filter_predicted_rmsd_le2.00/random-k-fold/1:5.csv")
+#     # ds = build_kd_ds(split_path=Path("data/processed/random-k-fold/1:5.csv"))
 #     # ds = build_kd_ds()
 #     print(len(ds))
