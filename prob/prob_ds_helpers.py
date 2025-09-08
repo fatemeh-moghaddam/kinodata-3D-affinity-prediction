@@ -27,7 +27,7 @@ colorama.init(autoreset=True)
 
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
 _DATA = _ROOT / "data"
-CPU_COUNT = 12
+CPU_COUNT = 16
 
 
 ##### These need to be moved to io at some point
