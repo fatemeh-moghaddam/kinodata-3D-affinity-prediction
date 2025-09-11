@@ -1,3 +1,8 @@
+echo "Args: $@"
+echo "PWD: $(pwd)"
+ls -l prob || echo "No prob directory here"
+
+
 #!/bin/bash
 set -euo pipefail
 
