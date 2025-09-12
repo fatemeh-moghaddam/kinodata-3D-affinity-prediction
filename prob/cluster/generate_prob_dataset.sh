@@ -1,10 +1,3 @@
-echo "Args: $@"
-echo "PWD: $(pwd)"
-ls -l prob || echo "No prob directory here"
-
-
-#!/bin/bash
-set -euo pipefail
 
 PROJECT_NAME="kinodata-3D-affinity-prediction"
 HOME_PROJ_DIR="${HOME}/${PROJECT_NAME}"
