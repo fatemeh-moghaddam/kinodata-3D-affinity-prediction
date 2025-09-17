@@ -47,6 +47,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         graph_level=True,
         split_index=0,
         dtype_out=None,  # None means no dtype conversion
+        device="cpu",
     )
 
     # validate kwargs
