@@ -1,5 +1,5 @@
 universe = docker
-docker_image = gjoschka/kinodata3d-b0:2.3.0-cuda12.1
+docker_image = gjoschka/kinodata3d-pt2.5.1-cu121-cudnn9
 executable = generate_prob_dataset.sh
 arguments = $(script) $(split) $(rmsd) $(gnn)
 output = gen_prob_ds.$(ClusterId).$(ProcId).out
