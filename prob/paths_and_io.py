@@ -1,21 +1,9 @@
 import os
-import numpy as np
 from pathlib import Path
-from typing import List, Literal, Any, Union
-import json
-import colorama
-from tqdm import tqdm
-import gc
 
 import torch
 
-from kinodata.data import KinodataDocked
-from kinodata.data.data_split import Split
-from kinodata.transform import TransformToComplexGraph
-from kinodata.model.complex_transformer import RegressionModel
-from kinodata.model.complex_transformer import make_model as make_complex_transformer
-from kinodata.model.dti import make_model as make_dti_baseline
-import kinodata.configuration as cfg
+
 
 
 
@@ -97,86 +85,28 @@ def get_out_dir(
     return p
 
 # ─────────────────────────────────────────────────────────────
-# Load/Save/Concatenate helpers
-# ─────────────────────────────────────────────────────────────
-# Load the model config from a JSON file
-# This is needed instead of cfg.update_from_file() because JSON files have a different structure
-# 
-def load_config(config_file: Path) -> dict[str, Any]:
-    with open(config_file, "r") as f_config:
-        config = json.load(f_config)
-    config = {str(key): value["value"] for key, value in config.items()}
-    # cfg.Config is a subclass of dict, it's a dictionary with some extra methods
-    # it is used when make_model is called
-    return cfg.Config(config) 
-
-
-
-
-def load_model_from_checkpoint(model: RegressionModel, model_ckpt: str) -> RegressionModel:
-    ckp = torch.load(model_ckpt, map_location="cpu")
-    assert isinstance(model, RegressionModel)
-    model.load_state_dict(ckp["state_dict"])
-    return model
-
-
-
-# ─────────────────────────────────────────────────────────────
-# Builders
+# Load/Save helpers
 # ─────────────────────────────────────────────────────────────
 
-def build_kd_ds(split_path: Union[str, Path, None] = None) -> KinodataDocked:
+
+def save_out_tensor(tensor: torch.Tensor, output_dir: Path, filename: str):
     """
-    Build the subset of KinodataDocked dataset based on the specific Split, 
-    combining test and validation of a split type and fold.
-
-    This will take a bit because it loads KinodataDocked
+    Save a tensor to a file in the output directory.
     """
-    if split_path is None:
-        raise ValueError("split_path must be provided")
-    if isinstance(split_path, str):
-        split_path = Path(split_path)
-    if split_path.exists():
-        split = Split.from_csv(split_path)
-    else:
-        raise FileNotFoundError(f"Split file not found: {split_path}")
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_file = output_dir / filename
+    torch.save(tensor, out_file)
+    return out_file
 
-    full_ds = KinodataDocked(transform=TransformToComplexGraph(remove_heterogeneous_representation=False),
-                      use_multiprocessing=True,
-                      num_processes= os.cpu_count())
-    ds = full_ds[[*split.test_split, *split.val_split]]
-
-    del full_ds  # free memory
-    gc.collect()
-    
-    return ds
-
-
-
-def build_gnn_model(cfg: cfg.Config) -> RegressionModel:
+def load_out_tensor(output_dir: Path, filename: str) -> torch.Tensor:
     """
-    Build and load a GNN model based on the provided configuration: model type and model checkpoint.
+    Load a tensor from a file in the output directory.
     """
-    gnn_type = cfg.gnn_model_type
-    if gnn_type not in ["DTI", "CGNN", "CGNN-3D"]:
-        raise ValueError(f"Unknown GNN model type: {gnn_type}. Expected one of ['DTI', 'CGNN', 'CGNN-3D']")
-    gnn_maker = {
-    "DTI": make_dti_baseline,
-    "CGNN": make_complex_transformer,
-    "CGNN-3D": make_complex_transformer
-    }
-    gnn = gnn_maker[gnn_type](cfg)
-    assert isinstance(gnn, RegressionModel), f"Expected a RegressionModel, got {type(gnn)}"
-    gnn_ckpt = cfg.model_ckpt
-    if not gnn_ckpt:
-        raise ValueError(f"Model checkpoint not found for GNN type: {gnn_type}")
-    loaded_gnn = load_model_from_checkpoint(gnn, gnn_ckpt)
-    return loaded_gnn
+    out_file = output_dir / filename
+    if not out_file.exists():
+        raise FileNotFoundError(f"File {out_file} does not exist.")
+    return torch.load(out_file)
 
-
-# ─────────────────────────────────────────────────────────────
-# Transform helpers
-# ─────────────────────────────────────────────────────────────
 
 
 

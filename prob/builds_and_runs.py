@@ -1,27 +1,32 @@
 '''
 This module includes run_fold, aggregate_fold, and helpers of these functions.
 '''
-import kinodata
 from kinodata.data import KinodataDocked
 from kinodata.types import *
-from kinodata.model import ComplexTransformer, RegressionModel
 from kinodata.configuration import Config
 
 import torch
 from torch_geometric.loader import DataLoader
-from torch_geometric.utils import unbatch, unbatch_edge_index
+from kinodata.data import KinodataDocked
+from kinodata.data.data_split import Split
+from kinodata.transform import TransformToComplexGraph
+from kinodata.model.complex_transformer import RegressionModel
+from kinodata.model.complex_transformer import make_model as make_complex_transformer
+from kinodata.model.dti import make_model as make_dti_baseline
+import kinodata.configuration as cfg
 
-import json
+
 from pathlib import Path
 import os
-from typing import Any, List, Dict, Tuple, Literal
+from typing import List, Dict, Union
 
-import pandas as pd
-import numpy as np
+
 from tqdm import tqdm
 import colorama
+import gc
 
-
+from prob.resloves_and_transforms import load_model_from_checkpoint, dtype_resolve
+from prob.paths_and_io import save_out_tensor
 
 colorama.init(autoreset=True)
 
@@ -30,43 +35,64 @@ _DATA = _ROOT / "data"
 CPU_COUNT = 16
 
 
-##### These need to be moved to io at some point
-def save_out_tensor(tensor: torch.Tensor, output_dir: Path, filename: str):
-    """
-    Save a tensor to a file in the output directory.
-    """
-    output_dir.mkdir(parents=True, exist_ok=True)
-    out_file = output_dir / filename
-    torch.save(tensor, out_file)
-    return out_file
 
-def load_out_tensor(output_dir: Path, filename: str) -> torch.Tensor:
-    """
-    Load a tensor from a file in the output directory.
-    """
-    out_file = output_dir / filename
-    if not out_file.exists():
-        raise FileNotFoundError(f"File {out_file} does not exist.")
-    return torch.load(out_file)
 
-#####
+# ─────────────────────────────────────────────────────────────
+# Builders
+# ─────────────────────────────────────────────────────────────
 
-#### Move?
-def dtype_resolve(dtype: torch.dtype | str | None) -> torch.dtype | None:
+def build_kd_ds(split_path: Union[str, Path, None] = None) -> KinodataDocked:
     """
-    Resolve the dtype from a string or return None.
+    Build the subset of KinodataDocked dataset based on the specific Split, 
+    combining test and validation of a split type and fold.
+
+    This will take a bit because it loads KinodataDocked
     """
-    if isinstance(dtype, str):
-        _map = {"float32": torch.float32, "fp32": torch.float32,
-                "float16": torch.float16, "fp16": torch.float16,
-                "bfloat16": torch.bfloat16}
-        dtype_out = _map.get(dtype.lower(), None)
-    elif isinstance(dtype, torch.dtype):
-        dtype_out = dtype
+    if split_path is None:
+        raise ValueError("split_path must be provided")
+    if isinstance(split_path, str):
+        split_path = Path(split_path)
+    if split_path.exists():
+        split = Split.from_csv(split_path)
     else:
-        dtype_out = None
-    return dtype_out
+        raise FileNotFoundError(f"Split file not found: {split_path}")
 
+    full_ds = KinodataDocked(transform=TransformToComplexGraph(remove_heterogeneous_representation=False),
+                      use_multiprocessing=True,
+                      num_processes= os.cpu_count())
+    ds = full_ds[[*split.test_split, *split.val_split]]
+
+    del full_ds  # free memory
+    gc.collect()
+    
+    return ds
+
+
+
+def build_gnn_model(cfg: cfg.Config) -> RegressionModel:
+    """
+    Build and load a GNN model based on the provided configuration: model type and model checkpoint.
+    """
+    gnn_type = cfg.gnn_model_type
+    if gnn_type not in ["DTI", "CGNN", "CGNN-3D"]:
+        raise ValueError(f"Unknown GNN model type: {gnn_type}. Expected one of ['DTI', 'CGNN', 'CGNN-3D']")
+    gnn_maker = {
+    "DTI": make_dti_baseline,
+    "CGNN": make_complex_transformer,
+    "CGNN-3D": make_complex_transformer
+    }
+    gnn = gnn_maker[gnn_type](cfg)
+    assert isinstance(gnn, RegressionModel), f"Expected a RegressionModel, got {type(gnn)}"
+    gnn_ckpt = cfg.model_ckpt
+    if not gnn_ckpt:
+        raise ValueError(f"Model checkpoint not found for GNN type: {gnn_type}")
+    loaded_gnn = load_model_from_checkpoint(gnn, gnn_ckpt)
+    return loaded_gnn
+
+
+# ─────────────────────────────────────────────────────────────
+# Runners
+# ─────────────────────────────────────────────────────────────
 
 # A function instead of a class
 def run_fold(ds: KinodataDocked,
@@ -118,7 +144,7 @@ def run_fold(ds: KinodataDocked,
                 _ , intermediate_node_reprs, intermediate_edge_reprs, _ = gnn_model(batch)
 
             # Forward
-            _ , intermediate_node_reprs, _ , prior_readout = gnn_model(batch)
+            _ , intermediate_node_reprs, _ , _= gnn_model(batch)
 
             # Pool each layer with the model's aggregator
             # intermediate_node_reprs: {layer_name: (node_repr, batch_index)}
@@ -165,72 +191,7 @@ def run_fold(ds: KinodataDocked,
 
 
 
-def aggregate_folds(config: Config, layer_name: str) -> None:
-    '''
-    Aggregate tensors from all folds for a specific layer, and writes them to config.output_dir.
-    out:
-        Saved aggregated tensors.
-        The naming pattern of the saved tensors is: {layer_name}.pt
-    '''
-    # I'm assuming this directory is the parent of the fold directories
-    output_dir = config.output_dir
-    # TODO: check if this is the correct directory
 
-    k_fold = config.get('k_fold', 5)
-
-    fold_tensors: List[torch.Tensor] = []
-    
-
-    # Load tensors from each fold
-    for fold in range(k_fold):  # Assuming 5 folds
-        fold_dir = output_dir / str(fold)
-        tensor_path = fold_dir / f"{layer_name}_{fold}.pt"
-        if tensor_path.exists():
-            fold_tensors.append(torch.load(tensor_path))
-        else:
-            print(f"Warning: {tensor_path} does not exist.")
-
-    if not fold_tensors:
-        print(colorama.Fore.RED + "No tensors found for aggregation." + colorama.Style.RESET_ALL)
-        return
-
-    # Concatenate tensors
-    aggregated_tensor = torch.cat(fold_tensors, dim=0)
-
-    # Save aggregated tensor
-    aggregated_path = output_dir / f"{layer_name}.pt"
-    torch.save(aggregated_tensor, aggregated_path)
-    print(f"Aggregated tensor saved to {aggregated_path}")
-
-    return
-
-
-def aggregate_ids(config: Config) -> None:
-    """
-    Aggregate ids_<fold>.pt across all folds and save to config.output_dir/ids.pt
-    """
-    output_dir = config.output_dir
-    k_fold = config.get('k_fold', 5)
-
-    id_tensors: List[torch.Tensor] = []
-    for fold in range(k_fold):
-        fold_dir = output_dir / str(fold)
-        ids_path = fold_dir / f"ids_{fold}.pt"
-        if ids_path.exists():
-            id_tensors.append(torch.load(ids_path))
-        else:
-            print(f"Warning: {ids_path} does not exist.")
-
-    if not id_tensors:
-        print(colorama.Fore.RED + "No ids found for aggregation." + colorama.Style.RESET_ALL)
-        return
-
-    aggregated_ids = torch.cat(id_tensors, dim=0)
-    aggregated_path = output_dir / "ids.pt"
-    torch.save(aggregated_ids, aggregated_path)
-    print(f"Aggregated ids saved to {aggregated_path}")
-
-    return
 
 ########################### DEPRECATED ###########################
 

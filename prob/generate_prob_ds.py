@@ -1,14 +1,11 @@
-import os
-from tqdm import tqdm
-
 import wandb
 import torch
 
 import kinodata.configuration as cfg
 
-from prob.utils import get_model_dir, get_model_ckpt, get_gnn_config_path, get_split_file, get_out_dir
-from prob.utils import build_kd_ds, build_gnn_model, load_config
-from prob.prob_ds_helpers import run_fold, aggregate_folds, aggregate_ids
+from prob.paths_and_io import get_model_dir, get_model_ckpt, get_gnn_config_path, get_split_file, get_out_dir
+from prob.builds_and_runs import build_kd_ds, build_gnn_model, run_fold
+from prob.resloves_and_transforms import load_config, aggregate_folds, aggregate_ids
 
 '''
 This generate the prob dataset for a specific GNN model and split
