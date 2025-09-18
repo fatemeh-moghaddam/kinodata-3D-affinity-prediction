@@ -178,57 +178,6 @@ def build_gnn_model(cfg: cfg.Config) -> RegressionModel:
 # Transform helpers
 # ─────────────────────────────────────────────────────────────
 
-def get_np_X(
-        graphs: List['GraphReprs'],
-        layer_name: str,
-        level: Literal["graph", "node"] = "graph"
-        ) -> np.ndarray:
-    """
-    Extract feature matrix X from GraphReprs objects for a given layer and level.
-
-    Returns:
-        X: np.ndarray, shape [n_samples, hidden_dim]
-    """
-    X_list = []
-
-    for g in graphs:
-        if level == "graph":
-            x = g.graph_repr[layer_name].detach().cpu().numpy()
-            X_list.append(x)
-        elif level == "node":
-            x = g.node_repr[layer_name].detach().cpu().numpy()
-            X_list.append(x)
-        else:
-            raise ValueError("level must be 'graph' or 'node'")
-
-    return np.vstack(X_list)
-
-
-
-def get_np_y(
-        graphs: List['GraphReprs'],
-        target: str,
-        level: Literal["graph", "node"] = "graph",
-        ) -> np.ndarray:
-    """
-    Extract target array y from GraphReprs objects for a given level.
-
-    Returns:
-        y: np.ndarray, shape [n_samples]
-    """
-    y_list = []
-
-    for g in graphs:
-        y = g.get_property(target)
-        if level == "graph":
-            y_list.append(y)
-        elif level == "node":
-            # y should be a 2D array with shape (NUM_GRAPHS, NUM_NODES)
-            pass 
-        else:
-            raise ValueError("level must be 'graph' or 'node'")
-
-    return np.array(y_list)
 
 
 # ─────────────────────────────────────────────────────────────

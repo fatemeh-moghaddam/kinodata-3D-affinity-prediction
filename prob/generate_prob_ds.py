@@ -75,7 +75,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
     # Get the addresses; each follows a pattern
     #   - model config and model ckpt follow: root/models/rmsd_cutoff_<rmsd_threshold>/<split_type>/<fold>/<model_name>
     #   - splits follows: root/data/processed/filter_predicted_rmsd_le<rmsd_threshold>.00/<split_type>/<fold>_5.csv
-    #   - output_dir: root/data/probing/<model_name>/<split_type>/<fold>/output
+    #   - output_dir: root/data/probing/<model_name>/rmsd_cutoff_<rmsd_threshold>/<split_type>/<fold>/output
     model_dir = get_model_dir(rmsd_threshold = prob_config.filter_rmsd_max_value,
                                   split_type = prob_config.split_type,
                                   split_fold = prob_config.split_index,
