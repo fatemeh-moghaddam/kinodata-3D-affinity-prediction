@@ -88,8 +88,9 @@ def set_probing_config(**kwargs) -> cfg.Config:
     
     ##### do I change this to output_dir?
     output_dir = get_out_dir(prob_config.gnn_model_type,
-                              prob_config.split_type,
-                              split_fold=None)
+                            prob_config.filter_rmsd_max_value,
+                            prob_config.split_type,
+                            split_fold=None)
     
 
     # Update the config from config file for GNN settings

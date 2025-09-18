@@ -79,17 +79,18 @@ def get_split_file(
 
 def get_out_dir(
         gnn_model_type: str,
-       split_type: str,
-       split_fold: int | None,
-       *,
-       root: Path = _ROOT
+        rmsd_threshold: int,
+        split_type: str,
+        split_fold: int | None,
+        *,
+        root: Path = _ROOT
     ) -> Path:
     """
     This is the output directory per fold. 
     The concatenated one would be in the parent directory of this.
     And the layered separation would be in the naming.
     """
-    p = root / "data/probing" / gnn_model_type / split_type
+    p = root / "data/probing" / gnn_model_type/ f"rmsd_cutoff_{rmsd_threshold}" / split_type
     if split_fold is not None:   # <- avoids dropping fold==0
         p = p / str(split_fold)
     p.mkdir(parents=True, exist_ok=True)
