@@ -1,9 +1,19 @@
+from pathlib import Path
 from typing import List, Dict
 
 import torch
 from torch_geometric.data import HeteroData
 
 from tqdm import tqdm
+
+from kinodata.data import KinodataDocked
+from kinodata.transform import TransformToComplexGraph
+
+from prob.paths_and_io import save_out_tensor, _ROOT
+
+
+
+
 
 def count_n_complex_no_rdkit(graph: HeteroData, 
                     node_type: str = "ligand") -> int:
@@ -33,3 +43,19 @@ def count_n_dataset(dataset: List[HeteroData],
     return nitros
 
 
+def caculate_save_nitrogen_counts(dataset: List[HeteroData],
+                    output_dir: Path = _ROOT/"data/probing/targets",
+                    node_type: str = "ligand",
+                    smiles_key: str = "smiles",
+                    ) -> List[int]:
+    """ 
+        Counts nitrogen atoms (Z == 7) in a list of HeteroData graphs.
+        Saves the result to a file.
+    """
+    nitrogen_atoms = count_n_dataset(dataset)
+    save_out_tensor(nitrogen_atoms, output_dir=output_dir, filename="nitrogen_counts.pt")
+
+
+if __name__ == "__main__":
+    dataset = KinodataDocked(transform=TransformToComplexGraph(remove_heterogeneous_representation=False), use_multiprocessing=True, num_processes= 16)
+    caculate_save_nitrogen_counts(dataset)
