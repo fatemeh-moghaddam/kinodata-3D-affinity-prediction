@@ -59,14 +59,18 @@ def set_probing_config(**kwargs) -> cfg.Config:
         assert kwargs["filter_rmsd_max_value"] in set({2, 4, 6, 2.00, 4.00, 6.00, None}), "Invalid RMSD threshold"
     if "split_index" in kwargs:
         assert isinstance(kwargs["split_index"], int) and kwargs["split_index"] >= 0, "Split index must be a non-negative integer"
+    if "config_name" in kwargs:
+        config_name = kwargs["config_name"]
+    else:
+        config_name = "probing_ds_generation"
 
     # merge: kwargs overrides defaults
     config_args = {**defaults, **kwargs}
     # Initialize the config with the defaults and kwargs
 
-    cfg.register("probing_ds", **config_args)
+    cfg.register(config_name, **config_args)
 
-    prob_config = cfg.get("probing_ds").update_from_args() # this activates the argparse itself
+    prob_config = cfg.get(config_name).update_from_args() # this activates the argparse itself
 
 
     # Get the addresses; each follows a pattern
