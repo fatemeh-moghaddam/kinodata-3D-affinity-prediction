@@ -1,6 +1,8 @@
 import os
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import torch
 
 
@@ -108,7 +110,33 @@ def load_out_tensor(output_dir: Path, filename: str) -> torch.Tensor:
     return torch.load(out_file)
 
 
+def load_X_from_pt(
+        in_dir: str | Path,
+        layer_num: int = 1,
+        ) -> np.ndarray:
+    """ Load a representation tensor from a .pt file and return it as a Numpy array."""
+    file_name = f"layer_{layer_num}.pt"
+    X_tensor = load_out_tensor(in_dir, file_name)
+    return X_tensor.detach().cpu().numpy()
 
+
+def load_y_by_ids(
+        in_dir: str | Path,
+        target_dir: str | Path,
+        ids_file: str = "ids.pt",
+        targets_file: str = None,
+        ) -> np.ndarray:
+    """ Load target values corresponding to the given ids from a targets .pt file."""
+    if targets_file is None:
+        raise ValueError("targets_file must be provided")
+    ids = load_out_tensor(in_dir, ids_file)
+    full_targets = load_out_tensor(target_dir, targets_file)
+    # for easier indexing
+    ids = ids.detach().cpu().numpy().astype(int)
+    target_df = pd.Series(full_targets, dtype="int64")
+    # slice
+    target_df = target_df[ids]
+    return target_df.to_numpy()
 
 # ─────────────────────────────────────────────────────────────
 # Test
