@@ -123,8 +123,8 @@ def load_X_from_pt(
 def load_y_by_ids(
         in_dir: str | Path,
         target_dir: str | Path,
-        ids_file: str = "ids.pt",
         targets_file: str = None,
+        ids_file: str = "ids.pt",
         ) -> np.ndarray:
     """ Load target values corresponding to the given ids from a targets .pt file."""
     if targets_file is None:
