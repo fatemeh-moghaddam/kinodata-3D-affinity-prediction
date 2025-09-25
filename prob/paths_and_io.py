@@ -86,6 +86,25 @@ def get_out_dir(
     p.mkdir(parents=True, exist_ok=True)
     return p
 
+
+def get_exp_dirs(out_root: str | Path, target: str , prob_model: str) -> dict[str, Path]:
+    """Create directories for storing results, figures, and artifacts.
+    Experiments are created based on their X, y, and prob model.
+    Returns a dict with paths.
+    """
+    exp_root = Path(out_root)  # e.g. ~/kinodata-3D-affinity-prediction/data/probing/CGNN-3D/rmsd_cutoff_2/random-k-fold
+    exp_root = exp_root / target / prob_model
+    dirs = {
+        "root": exp_root,
+        "figures": exp_root / "figures",
+        "artifacts": exp_root / "artifacts",
+        "reports": exp_root / "reports",
+    }
+    for p in dirs.values():
+        p.mkdir(parents=True, exist_ok=True)
+    return dirs
+
+
 # ─────────────────────────────────────────────────────────────
 # Load/Save helpers
 # ─────────────────────────────────────────────────────────────
