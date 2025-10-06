@@ -32,7 +32,7 @@ TARGET_FILE = "nitrogen_counts.pt"  # you can change per experiment
 # Config helpers
 # ─────────────────────────────────────────────────────────────
 
-def build_experiment_name(ds_cfg, layer_num: int) -> str:
+def build_experiment_name(ds_cfg: cfg.Config, layer_num: int) -> str:
     parts = [
         f"gnn={ds_cfg.gnn_model_type}",
         f"rmsd={ds_cfg.filter_rmsd_max_value}",
@@ -250,7 +250,7 @@ def main(prob_config: cfg.Config):
         ]
 
         for name, base, grid in models_and_grids:
-            exp_dirs = get_exp_dirs(prob_config.output_dir, target=Path(TARGET_FILE).stem, prob_model=name)
+            exp_dirs = get_exp_dirs(prob_config.output_dir, target=Path(TARGET_FILE).stem, prob_model=name, layer_num=layer)
             search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=name)
             all_runs.append({"experiment": exp_name, "model": name, **metrics, **search.best_params_})
 
@@ -264,11 +264,13 @@ def main(prob_config: cfg.Config):
             search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=name)
             all_runs.append({"experiment": exp_name, "model": name, **metrics, **search.best_params_})
 
-    # Aggregate summary across runs
-    summary_df = pd.DataFrame(all_runs)
-    summary_csv = prob_config.output_dir / "experiments" / "summary_runs.csv"
-    summary_df.to_csv(summary_csv, index=False)
-    summary_df.sort_values(["r2"], ascending=False).head(10)
+        # Aggregate summary across runs per layer
+        summary_df = pd.DataFrame(all_runs)
+        summary_csv = prob_config.output_dir / str(layer) / "experiments" / "summary_runs.csv"
+        if not summary_csv.parent.exists():
+            summary_csv.parent.mkdir(parents=True, exist_ok=True)
+        summary_df.to_csv(summary_csv, index=False)
+        summary_df.sort_values(["r2"], ascending=False).head(10)
 
 
 if __name__ == "__main__":
