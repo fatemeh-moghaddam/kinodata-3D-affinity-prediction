@@ -284,7 +284,7 @@ if __name__ == "__main__":
         project="probing",
         name=f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
         config={
-            **ds_load_config.to_dict(),
+            **ds_load_config,
             "random_state": RANDOM_STATE,
             "target_file": TARGET_FILE,
         },
