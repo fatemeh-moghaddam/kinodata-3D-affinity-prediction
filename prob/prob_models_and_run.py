@@ -234,9 +234,10 @@ def main(prob_config: cfg.Config):
 
     # Load target values
     y = load_y_by_ids(prob_config.output_dir, target_dir=prob_config.target_dir, targets_file=TARGET_FILE)
-
+    target_name = Path(TARGET_FILE).stem
+    
     for layer in layer_nums:
-        exp_name = build_experiment_name(prob_config, layer)
+        # exp_name = build_experiment_name(prob_config, layer)
         
 
         # Load data
@@ -249,24 +250,25 @@ def main(prob_config: cfg.Config):
             ("elasticnet", ElasticNet(random_state=RANDOM_STATE, max_iter=20000), enet_grid),
         ]
 
-        for name, base, grid in models_and_grids:
-            exp_dirs = get_exp_dirs(prob_config.output_dir, target=Path(TARGET_FILE).stem, prob_model=name, layer_num=layer)
-            search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=name)
-            all_runs.append({"experiment": exp_name, "model": name, **metrics, **search.best_params_})
+        for model_name, base, grid in models_and_grids:
+            exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
+            search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=model_name)
+            all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
 
         # Non-linear models
         nonlinear_models = [
             ("random_forest", RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=-1), rf_grid),
-            # ("mlp", MLPRegressor(random_state=RANDOM_STATE), mlp_grid),
+            ("mlp", MLPRegressor(random_state=RANDOM_STATE), mlp_grid),
         ]
 
-        for name, base, grid in nonlinear_models:
-            search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=name)
-            all_runs.append({"experiment": exp_name, "model": name, **metrics, **search.best_params_})
+        for model_name, base, grid in nonlinear_models:
+            exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
+            search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=model_name)
+            all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
 
         # Aggregate summary across runs per layer
         summary_df = pd.DataFrame(all_runs)
-        summary_csv = prob_config.output_dir / str(layer) / "experiments" / "summary_runs.csv"
+        summary_csv = prob_config.output_dir / target_name / "experiments" / "summary_runs.csv"
         if not summary_csv.parent.exists():
             summary_csv.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_csv(summary_csv, index=False)
