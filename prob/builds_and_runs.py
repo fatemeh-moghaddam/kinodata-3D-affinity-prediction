@@ -32,7 +32,7 @@ colorama.init(autoreset=True)
 
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
 _DATA = _ROOT / "data"
-CPU_COUNT = 16
+CPU_COUNT = os.environ.get("CPU_COUNT", "16")
 
 
 
@@ -59,7 +59,7 @@ def build_kd_ds(split_path: Union[str, Path, None] = None) -> KinodataDocked:
 
     full_ds = KinodataDocked(transform=TransformToComplexGraph(remove_heterogeneous_representation=False),
                       use_multiprocessing=True,
-                      num_processes= os.cpu_count())
+                      num_processes= CPU_COUNT)
     ds = full_ds[[*split.test_split, *split.val_split]]
 
     del full_ds  # free memory
