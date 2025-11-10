@@ -66,10 +66,10 @@ def plot_parity(y_true, y_pred, title: str, save_path: Path | None = None):
     lims = [min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())]
     plt.figure(figsize=(6, 6))
     g = sns.JointGrid(x=y_true, y=y_pred, space=0)
-    g.plot(sns.scatterplot, sns.histplot, joint_kws={"alpha": 0.5, "s": 12}, marginal_kws={"bins": 30, "fill": True})
+    # g.plot(sns.scatterplot, sns.histplot, joint_kws={"alpha": 0.5, "s": 12}, marginal_kws={"bins": 30, "fill": True})
     # same as writing:
-    # g.plot_joint(sns.scatterplot, alpha=0.5, s=12)
-    # g.plot_marginals(sns.histplot, bins=30, fill=True)
+    g.plot_joint(sns.scatterplot, alpha=0.5, s=12)
+    g.plot_marginals(sns.histplot, bins=30, fill=True)
     g.ax_joint.plot(lims, lims, "r--", linewidth=1)
     g.set_axis_labels("True", "Predicted")
     g.fig.suptitle(title, y=1.02)
@@ -166,17 +166,18 @@ def run_cv_search(X, y, prob_model, param_grid: dict, n_splits: int = N_SPLITS_C
             "best_score_r2": search.best_score_,
             "metrics_on_unseen_data": metrics,
             "n_samples": int(len(y)),
+            "n_test_samples": int(len(y_test)),
             "n_features": int(X.shape[1]),
         }
         with open(exp_dirs["reports"] / f"{model_name}_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
         # Predictions
-        pred_df = pd.DataFrame({"y_true": y, "y_pred": y_pred})
+        pred_df = pd.DataFrame({"y_true": y_test, "y_pred": y_pred})
         pred_df.to_csv(exp_dirs["artifacts"] / f"{model_name}_predictions.csv", index=False)
 
         # Plots
-        plot_parity(y, y_pred, title=f"{model_name} Parity (R2={metrics['r2']:.3f})", save_path=exp_dirs["figures"] / f"{model_name}_parity.png")
-        plot_residuals(y, y_pred, title=f"{model_name} Residuals (RMSE={metrics['rmse']:.3f})", save_path=exp_dirs["figures"] / f"{model_name}_residuals.png")
+        plot_parity(y_test, y_pred, title=f"{model_name} Parity (R2={metrics['r2']:.3f})", save_path=exp_dirs["figures"] / f"{model_name}_parity.png")
+        plot_residuals(y_test, y_pred, title=f"{model_name} Residuals (RMSE={metrics['rmse']:.3f})", save_path=exp_dirs["figures"] / f"{model_name}_residuals.png")
 
     return search, metrics, y_pred
 
@@ -266,7 +267,7 @@ def linear_models(prob_config: cfg.Config, X: np.ndarray, y: np.ndarray, n_jobs:
     #             "model__l1_ratio": [0.1, 0.5, 0.9]}
 
 
-    target_name = prob_config.target_file.stem
+    target_name = prob_config.target_dir.stem
     layer = prob_config.layer_num
 
     # Run experiments for each model
@@ -299,7 +300,7 @@ def non_linear_models(prob_config: cfg.Config, X: np.ndarray, y: np.ndarray, n_j
         "model__random_state": [RANDOM_STATE],
     }
 
-    target_name = prob_config.target_file.stem
+    target_name = prob_config.target_dir.stem
     layer = prob_config.layer_num
 
     # Run experiments for each model
@@ -330,6 +331,7 @@ def main(prob_config: cfg.Config):
     
     for layer in layer_nums:
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
+        prob_config.update({"layer_num": layer}, allow_duplicates=True)
 
         # Linear models
         all_runs.extend(linear_models(prob_config, X, y, n_jobs=n_jobs))
