@@ -1,4 +1,6 @@
 import json
+import os
+import re
 import time
 from datetime import datetime
 from pathlib import Path
@@ -11,7 +13,7 @@ import seaborn as sns
 
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.linear_model import Ridge, Lasso, ElasticNet
-from sklearn.model_selection import KFold, GridSearchCV
+from sklearn.model_selection import KFold, GridSearchCV, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error, make_scorer
@@ -19,75 +21,40 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
 
 import kinodata.configuration as cfg
-from prob.paths_and_io import get_out_dir, get_exp_dirs, load_out_tensor, load_y_by_ids, load_X_from_pt
+from prob.paths_and_io import get_exp_dirs, load_out_tensor, load_y_by_ids, load_X_from_pt
+from prob.prob_config import get_ds_load_config, build_experiment_name
+
 import wandb
 
 
 RANDOM_STATE = 96
+N_SPLITS_CV = 5
+TEST_SIZE = 0.1
+
 # Targets configuration for traceability
 TARGET_FILE = "nitrogen_counts.pt"  # you can change per experiment
+_ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
 
 
 # ─────────────────────────────────────────────────────────────
-# Config helpers
+# Resource helpers
 # ─────────────────────────────────────────────────────────────
+def _cpu_budget(default=16, sub_file=None):
+    # 1. Trying scheduler environment variables, based on common conventions
+    for key in ("SLURM_CPUS_PER_TASK", "NSLOTS", "OMP_NUM_THREADS"):
+        if key in os.environ and os.environ[key].isdigit():
+            return int(os.environ[key])
 
-def build_experiment_name(ds_cfg: cfg.Config, layer_num: int) -> str:
-    parts = [
-        f"gnn={ds_cfg.gnn_model_type}",
-        f"rmsd={ds_cfg.filter_rmsd_max_value}",
-        f"split={ds_cfg.split_type}",
-        f"layer={layer_num}",
-        f"target={Path(ds_cfg.target_file).stem}",
-    ]
-    return "_".join(parts)
+    # 2. parsing the submission file if provided
+    if sub_file and Path(sub_file).exists():
+        text = Path(sub_file).read_text()
+        match = re.search(r"request_CPUs\s*=\s*(\d+)", text, flags=re.I)
+        if match:
+            return int(match.group(1))
 
+    # 3. Fallback
+    return default
 
-def get_ds_load_config(**kwargs):
-    # default config values
-    defaults = dict(
-            gnn_model_type="CGNN-3D",
-            split_type="random-k-fold",
-            filter_rmsd_max_value=2,
-            graph_level=True,
-            split_index=None,
-            dtype_out=None,  # None means no dtype conversion
-            device="cpu",
-        )
-    
-    if kwargs.keys() - defaults.keys() != set():
-        raise ValueError(f"Invalid arguments: {kwargs.keys() - defaults.keys()}")
-
-    if "gnn_model_type" in kwargs:
-        assert kwargs["gnn_model_type"] in ["CGNN-3D", "CGNN", "DTI"], "Invalid GNN model type"
-    if "split_type" in kwargs:
-        assert kwargs["split_type"] in ["random-k-fold", "scaffold-k-fold", "pocket-k-fold"], "Invalid split type"
-    if "filter_rmsd_max_value" in kwargs:
-        assert kwargs["filter_rmsd_max_value"] in set({2, 4, 6, 2.00, 4.00, 6.00, None}), "Invalid RMSD threshold"
-    if "split_index" in kwargs:
-        assert kwargs["split_index"] in set({0, 1, 2, 3, 4, None}), "Invalid split index"
-    if "config_name" in kwargs:
-        config_name = kwargs["config_name"]
-    else:
-        config_name = "prob_ds_load"
-    if "target_file" in kwargs:
-        target_file = kwargs["target_file"]
-    else:
-        target_file = TARGET_FILE
-
-    # merge: kwargs overrides defaults
-    config_args = {**defaults, **kwargs}
-    # Initialize the config with the defaults and kwargs
-    output_dir = get_out_dir(config_args["gnn_model_type"],
-                                config_args["filter_rmsd_max_value"],
-                                config_args["split_type"],
-                                split_fold=None)
-    
-    target_dir = output_dir.parents[2] / "targets"
-
-    cfg.register(config_name, **{**config_args, "output_dir": output_dir, "target_dir": target_dir})
-    prob_ds_config = cfg.get(config_name).update_from_args() # this activates the argparse itself
-    return prob_ds_config
 
 
 # ─────────────────────────────────────────────────────────────
@@ -97,17 +64,19 @@ def get_ds_load_config(**kwargs):
 
 def plot_parity(y_true, y_pred, title: str, save_path: Path | None = None):
     lims = [min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())]
-    plt.figure(figsize=(5, 5))
-    sns.scatterplot(x=y_true, y=y_pred, s=12, alpha=0.5)
-    plt.plot(lims, lims, "r--", linewidth=1)
-    plt.xlabel("True")
-    plt.ylabel("Predicted")
-    plt.title(title)
-    plt.xlim(lims)
-    plt.ylim(lims)
-    plt.tight_layout()
+    plt.figure(figsize=(6, 6))
+    g = sns.JointGrid(x=y_true, y=y_pred, space=0)
+    g.plot(sns.scatterplot, sns.histplot, joint_kws={"alpha": 0.5, "s": 12}, marginal_kws={"bins": 30, "fill": True})
+    # same as writing:
+    # g.plot_joint(sns.scatterplot, alpha=0.5, s=12)
+    # g.plot_marginals(sns.histplot, bins=30, fill=True)
+    g.ax_joint.plot(lims, lims, "r--", linewidth=1)
+    g.set_axis_labels("True", "Predicted")
+    g.fig.suptitle(title, y=1.02)
+    g.ax_joint.set_xlim(lims)
+    g.ax_joint.set_ylim(lims)
     if save_path is not None:
-        plt.savefig(save_path, dpi=200)
+        g.fig.savefig(save_path, dpi=200) # dot per inch
     plt.show()
 
 
@@ -120,8 +89,12 @@ def plot_residuals(y_true, y_pred, title: str, save_path: Path | None = None):
     plt.title(title)
     plt.tight_layout()
     if save_path is not None:
-        plt.savefig(save_path, dpi=200)
+        plt.savefig(save_path, dpi=200) 
     plt.show()
+
+
+def plot_contours(X, y, model, title: str, save_path: Path | None = None):
+    ...
 
 # ─────────────────────────────────────────────────────────────
 # Metrics helpers
@@ -145,12 +118,17 @@ def evaluate_predictions(y_true, y_pred) -> dict:
 # Run CV and save artifacts
 # ─────────────────────────────────────────────────────────────
 
-def run_cv_search(X, y, base_estimator, param_grid: dict, n_splits: int = 5, n_jobs: int = -1, exp_dirs: dict | None = None, model_name: str = "model"):
+def run_cv_search(X, y, prob_model, param_grid: dict, n_splits: int = N_SPLITS_CV, n_jobs: int = 0, exp_dirs: dict | None = None, model_name: str = "model"):
     """Run GridSearchCV with a standard pipeline and return the fitted search, metrics on CV-held out predictions, and store artifacts."""
+    if n_jobs == 0:
+        n_jobs = _cpu_budget()
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE)
+
     # Standardize features; target left as-is
     pipe = Pipeline([
         ("scaler", StandardScaler(with_mean=True, with_std=True)),
-        ("model", base_estimator),
+        ("model", prob_model),
     ])
 
     cv = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_STATE)
@@ -168,12 +146,12 @@ def run_cv_search(X, y, base_estimator, param_grid: dict, n_splits: int = 5, n_j
     )
 
     start = time.time()
-    search.fit(X, y)
+    search.fit(X_train, y_train)
     elapsed = time.time() - start
 
-    # Evaluate on cross-validated predictions using best estimator
-    y_pred = search.best_estimator_.predict(X)
-    metrics = evaluate_predictions(y, y_pred)
+    # Evaluate on held-out set using best estimator
+    y_pred = search.best_estimator_.predict(X_test)
+    metrics = evaluate_predictions(y_test, y_pred)
     metrics["fit_seconds"] = elapsed
 
     # Save artifacts
@@ -186,7 +164,7 @@ def run_cv_search(X, y, base_estimator, param_grid: dict, n_splits: int = 5, n_j
             "model": model_name,
             "best_params": search.best_params_,
             "best_score_r2": search.best_score_,
-            "metrics_on_full_data": metrics,
+            "metrics_on_unseen_data": metrics,
             "n_samples": int(len(y)),
             "n_features": int(X.shape[1]),
         }
@@ -204,16 +182,111 @@ def run_cv_search(X, y, base_estimator, param_grid: dict, n_splits: int = 5, n_j
 
 
 
-def main(prob_config: cfg.Config):
-    # Run experiments across selected layers for linear and non-linear models
-    all_runs = []
-    # Choose which layer(s) to probe
-    layer_nums = [1,2,3]  # e.g., [0,1,2,3] to sweep multiple layers
+# def main(prob_config: cfg.Config):
+#     # Run experiments across selected layers for linear and non-linear models
+#     all_runs = []
+#     # Choose which layer(s) to probe
+#     layer_nums = [1,2,3]  # e.g., [0,1,2,3] to sweep multiple layers
 
+#     # Determine CPU budget
+#     sub_path = _ROOT / "prob/cluster/"
+#     sub_file = Path(sub_path / "run_prob.sub")  # change as needed
+#     n_jobs = _cpu_budget(sub_file=sub_file)
+
+#     rf_grid = {
+#     "model__n_estimators": [200, 500],
+#     "model__max_depth": [None, 10, 20],
+#     "model__min_samples_leaf": [1, 2, 4],
+#     }
+
+#     mlp_grid = {
+#         "model__hidden_layer_sizes": [(128,), (256,), (256, 128)],
+#         "model__activation": ["relu"],
+#         "model__alpha": [1e-5, 1e-4, 1e-3],
+#         "model__learning_rate_init": [1e-3, 3e-3],
+#         "model__max_iter": [200],
+#         "model__early_stopping": [True],
+#         "model__random_state": [RANDOM_STATE],
+#     }
+#     # For Linear models
+#     ridge_grid = {"model__alpha": np.logspace(-5, 1, 5)}
+#     lasso_grid = {"model__alpha": np.logspace(-5, 1, 5)}
+#     enet_grid  = {"model__alpha": np.logspace(-5, 1, 5),
+#                 "model__l1_ratio": [0.1, 0.5, 0.9]}
+
+
+#     # Load target values
+#     y = load_y_by_ids(prob_config.output_dir, target_dir=prob_config.target_dir, targets_file=TARGET_FILE)
+#     target_name = Path(TARGET_FILE).stem
+    
+#     for layer in layer_nums:
+#         # exp_name = build_experiment_name(prob_config, layer)
+        
+
+#         # Load data
+#         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
+        
+#         # Linear models
+#         models_and_grids = [
+#             ("ridge", Ridge(random_state=RANDOM_STATE), ridge_grid),
+#             ("lasso", Lasso(random_state=RANDOM_STATE, max_iter=20000), lasso_grid),
+#             ("elasticnet", ElasticNet(random_state=RANDOM_STATE, max_iter=20000), enet_grid),
+#         ]
+
+#         for model_name, base, grid in models_and_grids:
+#             exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
+#             search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=N_SPLITS_CV, exp_dirs=exp_dirs, n_jobs=n_jobs, model_name=model_name)
+#             all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
+
+#         # Non-linear models
+#         nonlinear_models = [
+#             ("random_forest", RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=1), rf_grid),
+#             ("mlp", MLPRegressor(random_state=RANDOM_STATE, n_jobs=1), mlp_grid),
+#         ]
+
+#         for model_name, base, grid in nonlinear_models:
+#             exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
+#             search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=N_SPLITS_CV, exp_dirs=exp_dirs, n_jobs=n_jobs, model_name=model_name)
+#             all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
+
+#         # Aggregate summary across runs per layer
+#         summary_df = pd.DataFrame(all_runs)
+#         summary_csv = prob_config.output_dir / target_name / "experiments" / "summary_runs.csv"
+#         if not summary_csv.parent.exists():
+#             summary_csv.parent.mkdir(parents=True, exist_ok=True)
+#         summary_df.to_csv(summary_csv, index=False)
+#         summary_df.sort_values(["r2"], ascending=False).head(10)
+
+
+def linear_models(prob_config: cfg.Config, X: np.ndarray, y: np.ndarray, n_jobs: int = _cpu_budget()):
+    # Define the linear models and their parameter grids
+    ridge_grid = {"model__alpha": np.logspace(-5, 4, 10)}
+    lasso_grid = {"model__alpha": np.logspace(-5, 1, 7)}
+    # enet_grid  = {"model__alpha": np.logspace(-5, 4, 10),
+    #             "model__l1_ratio": [0.1, 0.5, 0.9]}
+
+
+    target_name = prob_config.target_file.stem
+    layer = prob_config.layer_num
+
+    # Run experiments for each model
+    all_runs = []
+    for model_name, base, grid in [("ridge", Ridge(random_state=RANDOM_STATE), ridge_grid),
+                                    ("lasso", Lasso(random_state=RANDOM_STATE, max_iter=10000), lasso_grid)]:
+                                    # ("elasticnet", ElasticNet(random_state=RANDOM_STATE, max_iter=10000), enet_grid)]:
+        exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
+        search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=N_SPLITS_CV, exp_dirs=exp_dirs, n_jobs=n_jobs, model_name=model_name)
+        all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
+
+    return all_runs
+
+
+def non_linear_models(prob_config: cfg.Config, X: np.ndarray, y: np.ndarray, n_jobs: int = _cpu_budget()):
+    # Define the non-linear models and their parameter grids
     rf_grid = {
-    "model__n_estimators": [200, 500],
-    "model__max_depth": [None, 10, 20],
-    "model__min_samples_leaf": [1, 2, 4],
+        "model__n_estimators": [200, 500],
+        "model__max_depth": [None, 10, 20],
+        "model__min_samples_leaf": [1, 2, 4],
     }
 
     mlp_grid = {
@@ -225,46 +298,44 @@ def main(prob_config: cfg.Config):
         "model__early_stopping": [True],
         "model__random_state": [RANDOM_STATE],
     }
-    # For Linear models
-    ridge_grid = {"model__alpha": np.logspace(-6, 6, 13)}
-    lasso_grid = {"model__alpha": np.logspace(-6, 1, 8)}
-    enet_grid  = {"model__alpha": np.logspace(-6, 3, 10),
-                "model__l1_ratio": [0.1, 0.5, 0.9]}
 
+    target_name = prob_config.target_file.stem
+    layer = prob_config.layer_num
+
+    # Run experiments for each model
+    all_runs = []
+    for model_name, base, grid in [("random_forest", RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=1), rf_grid),
+                                    ("mlp", MLPRegressor(random_state=RANDOM_STATE, n_jobs=1), mlp_grid)]:
+        exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
+        search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=N_SPLITS_CV, exp_dirs=exp_dirs, n_jobs=n_jobs, model_name=model_name)
+        all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
+
+    return all_runs
+
+
+def main(prob_config: cfg.Config):
+    # Run experiments across selected layers for linear and non-linear models
+    all_runs = []
+    # Choose which layer(s) to probe
+    layer_nums = [1,2,3]  # e.g., [0,1,2,3] to sweep multiple layers
+
+    # Determine CPU budget
+    sub_path = _ROOT / "prob/cluster/"
+    sub_file = Path(sub_path / "run_prob.sub")  # change as needed
+    n_jobs = _cpu_budget(sub_file=sub_file)
 
     # Load target values
     y = load_y_by_ids(prob_config.output_dir, target_dir=prob_config.target_dir, targets_file=TARGET_FILE)
     target_name = Path(TARGET_FILE).stem
     
     for layer in layer_nums:
-        # exp_name = build_experiment_name(prob_config, layer)
-        
-
-        # Load data
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
-        
-        # Linear models
-        models_and_grids = [
-            ("ridge", Ridge(random_state=RANDOM_STATE), ridge_grid),
-            ("lasso", Lasso(random_state=RANDOM_STATE, max_iter=20000), lasso_grid),
-            ("elasticnet", ElasticNet(random_state=RANDOM_STATE, max_iter=20000), enet_grid),
-        ]
 
-        for model_name, base, grid in models_and_grids:
-            exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
-            search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=model_name)
-            all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
+        # Linear models
+        all_runs.extend(linear_models(prob_config, X, y, n_jobs=n_jobs))
 
         # Non-linear models
-        nonlinear_models = [
-            ("random_forest", RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=-1), rf_grid),
-            ("mlp", MLPRegressor(random_state=RANDOM_STATE), mlp_grid),
-        ]
-
-        for model_name, base, grid in nonlinear_models:
-            exp_dirs = get_exp_dirs(prob_config.output_dir, target=target_name, prob_model=model_name, layer_num=layer)
-            search, metrics, _ = run_cv_search(X, y, base, grid, n_splits=5, n_jobs=-1, exp_dirs=exp_dirs, model_name=model_name)
-            all_runs.append({"experiment": f"{target_name}_{model_name}", "layer": layer, **metrics, **search.best_params_})
+        # all_runs.extend(non_linear_models(prob_config, X, y, n_jobs=n_jobs))
 
         # Aggregate summary across runs per layer
         summary_df = pd.DataFrame(all_runs)
@@ -273,6 +344,8 @@ def main(prob_config: cfg.Config):
             summary_csv.parent.mkdir(parents=True, exist_ok=True)
         summary_df.to_csv(summary_csv, index=False)
         summary_df.sort_values(["r2"], ascending=False).head(10)
+
+    return all_runs
 
 
 if __name__ == "__main__":
