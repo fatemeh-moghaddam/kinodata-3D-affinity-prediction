@@ -14,6 +14,4 @@ requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
 queue script, split, rmsd, gnn from (
    prob_models_and_run, random-k-fold, 2, CGNN-3D
-   prob_models_and_run, scaffold-k-fold, 2, CGNN-3D
-   prob_models_and_run, pocket-k-fold, 2, CGNN-3D
 )
