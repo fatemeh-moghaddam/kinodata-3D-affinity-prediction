@@ -144,6 +144,7 @@ def load_y_by_ids(
         target_dir: str | Path,
         targets_file: str = None,
         ids_file: str = "ids.pt",
+        default_value: int = 0,
         ) -> np.ndarray:
     """ Load target values corresponding to the given ids from a targets .pt file."""
     if targets_file is None:
@@ -152,10 +153,11 @@ def load_y_by_ids(
     full_targets = load_out_tensor(target_dir, targets_file)
     # for easier indexing
     ids = ids.detach().cpu().numpy().astype(int)
-    target_df = pd.Series(full_targets, dtype="int64")
-    # slice
-    target_df = target_df[ids]
-    return target_df.to_numpy()
+    y = np.array(
+        [full_targets.get(int(ident), default_value) for ident in ids],
+        dtype="int64",
+    )
+    return y
 
 # ─────────────────────────────────────────────────────────────
 # Test
