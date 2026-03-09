@@ -1,3 +1,4 @@
+from functools import lru_cache
 import os
 from pathlib import Path
 
@@ -12,6 +13,22 @@ import torch
 
 # _ROOT = Path(__file__).resolve().parent.parent
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1])) # to allow setting a different root via env variable
+
+
+_MARKERS = ("setup.py", ".git", "README.md")
+
+def _find_root(start: Path) -> Path:
+    for p in [start, *start.parents]:
+        if any((p / m).exists() for m in _MARKERS):
+            return p
+    raise RuntimeError(f"Could not find project root from {start}")
+
+@lru_cache(maxsize=1)
+def get_project_root() -> Path:
+    env = os.getenv("HOME_PROJ_DIR")
+    if env:
+        return Path(env).expanduser().resolve()
+    return _find_root(Path.cwd().resolve())
 
 
 # ─────────────────────────────────────────────────────────────
