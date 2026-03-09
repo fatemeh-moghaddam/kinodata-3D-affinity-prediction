@@ -176,7 +176,7 @@ def plot_dist_with_log(
     axes[1].set_yscale("symlog", linthresh=20)
     axes[1].set_xlabel(col)
     axes[1].set_ylabel("Count (log scale)")
-    axes[1].set_title(f"{title or col} Distribution (log-scaled)")
+    axes[1].set_title(f"{title or col} (log-scaled)")
 
     if show_ecdf:
         ax_ecdf = axes[1].twinx()
@@ -251,6 +251,130 @@ def scatter_affinity_vs_bonds(
         or f"{y_col} vs {bond_col}\n"
            f"R = {res.rvalue:.3f}, p = {res.pvalue:.2e}"
     )
+    fig.tight_layout()
+
+    out_path = _resolve_save_path(save_path)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
+
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_transformation_mapping(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    *,
+    title: Optional[str] = None,
+    kde_contour: bool = True,
+    add_binned_trend: bool = True,
+    trend_bins: int = 40,
+    save_path: Optional[Path] = None,
+    show: bool = True,
+    context_overwrite: None | str = None,
+) -> None:
+    """
+    Visualize how a transformed score maps from an input column.
+
+    Left panel:
+    - scatter of (x_col, y_col)
+    - optional binned-median trend line for readability
+
+    Right panel:
+    - KDE contour (default) or hexbin density
+
+    Example:
+        plot_transformation_mapping(
+            hydrogen_bonds_df,
+            x_col="DIST_D-A",
+            y_col="s_d_gauss",
+            title="Gaussian distance score mapping",
+            save_path=exp_root / "s_d_gauss_vs_distance",
+        )
+    """
+    if context_overwrite is not None:
+        sns.set_context(context_overwrite)
+
+    data = df[[x_col, y_col]].dropna().copy()
+    if data.empty:
+        raise ValueError(f"No non-null rows found for columns: {x_col}, {y_col}")
+    data = data.sort_values(x_col)
+
+    fig, axes = plt.subplots(1, 2, figsize=FIG_SIZE_WIDE)
+
+    # Panel 1: direct mapping
+    sns.scatterplot(
+        data=data,
+        x=x_col,
+        y=y_col,
+        s=10,
+        alpha=0.22,
+        edgecolor="none",
+        ax=axes[0],
+    )
+
+    if add_binned_trend:
+        n_bins = max(5, min(trend_bins, len(data)))
+        binned = data.assign(
+            _bin=pd.qcut(data[x_col], q=n_bins, duplicates="drop")
+        ).groupby("_bin", observed=True).agg(
+            x_mid=(x_col, "median"),
+            y_mid=(y_col, "median"),
+        )
+        axes[0].plot(
+            binned["x_mid"],
+            binned["y_mid"],
+            color="red",
+            linewidth=2,
+            label="Binned median trend",
+        )
+        axes[0].legend(frameon=True)
+
+    axes[0].set_title(f"{y_col} vs {x_col}")
+    axes[0].set_xlabel(x_col)
+    axes[0].set_ylabel(y_col)
+
+    # Panel 2: density view
+    if kde_contour:
+        sns.kdeplot(
+            data=data,
+            x=x_col,
+            y=y_col,
+            fill=True,
+            levels=20,
+            thresh=0.02,
+            cmap="viridis",
+            ax=axes[1],
+        )
+        sns.scatterplot(
+            data=data,
+            x=x_col,
+            y=y_col,
+            s=5,
+            alpha=0.08,
+            color="white",
+            edgecolor="none",
+            ax=axes[1],
+        )
+        axes[1].set_title("KDE contour density")
+    else:
+        hb = axes[1].hexbin(
+            data[x_col],
+            data[y_col],
+            gridsize=40,
+            cmap="viridis",
+            mincnt=3,
+        )
+        cbar = fig.colorbar(hb, ax=axes[1])
+        cbar.set_label("Count")
+        axes[1].set_title("Hexbin density")
+
+    axes[1].set_xlabel(x_col)
+    axes[1].set_ylabel(y_col)
+
+    fig.suptitle(title or f"Transformation mapping: {x_col} -> {y_col}", y=1.02)
     fig.tight_layout()
 
     out_path = _resolve_save_path(save_path)
