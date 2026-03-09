@@ -30,7 +30,11 @@ def get_project_root() -> Path:
         return Path(env).expanduser().resolve()
     return _find_root(Path.cwd().resolve())
 
-
+@lru_cache(maxsize=1)
+def get_data_dir(prob: bool = True) -> Path:
+    if prob:
+        return get_project_root() / "data/probing"
+    return get_project_root() / "data"
 # ─────────────────────────────────────────────────────────────
 # Directory helpers
 # ─────────────────────────────────────────────────────────────
