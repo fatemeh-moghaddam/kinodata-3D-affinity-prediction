@@ -224,11 +224,13 @@ class ComplexTransformer(RegressionModel):
             self.atomic_num_embedding(node_store.z)
             + self.lin_atom_features(node_store.x)
         )
-        intermediate_node_reprs = {}
-        intermediate_edge_reprs = {}
+        edge_index, edge_repr = self.interaction_module(data)
+
+        intermediate_node_reprs = {"layer_0": (node_repr.clone().detach(), node_store.batch)}
+        intermediate_edge_reprs = {"layer_0": (edge_repr.clone().detach(), edge_index.clone().detach())} if edge_repr is not None else {}
         # intermediate_edge_indecies = {}
 
-        edge_index, edge_repr = self.interaction_module(data)
+        # layer 0; before any attention blocks, for the skyline
         for l, (sparse_attention_block, norm) in enumerate(zip(
             self.attention_blocks, self.norm_layers)
         ):
