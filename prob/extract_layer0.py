@@ -89,7 +89,7 @@ def main() -> None:
         default="random-k-fold",
         choices=["random-k-fold", "scaffold-k-fold", "pocket-k-fold"],
     )
-    parser.add_argument("--filter_rmsd_max_value", default=2, type=float)
+    parser.add_argument("--filter_rmsd_max_value", default=2, type=float|int)
     parser.add_argument("--k_fold", default=5, type=int)
     parser.add_argument("--seed", default=123, type=int)
     parser.add_argument("--device", default="cpu", type=str)
