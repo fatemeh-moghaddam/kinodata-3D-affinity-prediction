@@ -243,7 +243,9 @@ def run_cv_search(
     run_stats: bool = True,
     n_bootstrap: int = 1000,
     confidence: float = 0.95,
-) -> Tuple[GridSearchCV, Dict[str, Any], np.ndarray]:
+    reuse_best_params: bool = False,
+    best_params_cache_dir: Optional[Path] = None,
+) -> Tuple[Any, Dict[str, Any], np.ndarray]:
     """
     Tune hyperparameters on a train split, then run the best estimator on the
     same split's test set (refit best pipeline on train, predict on test),
@@ -251,10 +253,88 @@ def run_cv_search(
 
     Saves: tuning (cv_results, best_params) and run (predictions, summary with
     statistical_tests, figures). Returns (search, metrics, y_pred).
+
+    If reuse_best_params is True, this will skip GridSearchCV when cached
+    best params exist (writing only run artifacts). This is intended for
+    running many similar experiments without re-tuning.
     """
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=test_size, random_state=random_state
     )
+
+    class _BestParamsOnly:
+        """Minimal stand-in so callers can still use `.best_params_`."""
+
+        def __init__(self, best_params: Dict[str, Any]):
+            self.best_params_ = best_params
+
+    def _best_params_file(dir_: Optional[Path]) -> Optional[Path]:
+        if dir_ is None:
+            return None
+        return dir_ / f"{model_name}_best_params.json"
+
+    def _normalize_loaded_best_params(loaded: Dict[str, Any]) -> Dict[str, Any]:
+        # `json.dump` converts tuples to lists. Convert back for sklearn params
+        # that typically expect tuples.
+        normalized = dict(loaded)
+        for k, v in normalized.items():
+            if isinstance(v, list) and k.endswith("hidden_layer_sizes"):
+                normalized[k] = tuple(v)
+        return normalized
+
+    search: Any
+    loaded_best_params: Optional[Dict[str, Any]] = None
+
+    # If enabled, prefer:
+    # 1) best_params written for the current exp_dirs (re-run of same experiment)
+    # 2) a shared cache directory that is common across layers for the same model/target
+    if reuse_best_params and exp_dirs is not None:
+        current_best_params_fp = _best_params_file(exp_dirs.get("reports"))
+        if current_best_params_fp is not None and current_best_params_fp.exists():
+            with open(current_best_params_fp, "r") as f:
+                loaded_best_params = _normalize_loaded_best_params(json.load(f))
+        else:
+            cache_dir = best_params_cache_dir
+            if cache_dir is None:
+                # exp_dirs["root"] ends with ".../<prob_model>/<layer_num>", so sharing
+                # is achieved by writing alongside ".../<prob_model>/".
+                cache_dir = exp_dirs["root"].parent / "shared_best_params"
+            cache_fp = _best_params_file(cache_dir)
+            if cache_fp is not None and cache_fp.exists():
+                with open(cache_fp, "r") as f:
+                    loaded_best_params = _normalize_loaded_best_params(json.load(f))
+
+    if loaded_best_params is not None:
+        # Ensure per-exp best params exist too (keeps artifacts consistent).
+        if exp_dirs is not None:
+            reports_dir = exp_dirs.get("reports")
+            if reports_dir is not None:
+                reports_dir.mkdir(parents=True, exist_ok=True)
+                fp = reports_dir / f"{model_name}_best_params.json"
+                if not fp.exists():
+                    with open(fp, "w") as f:
+                        json.dump(loaded_best_params, f, indent=2)
+
+        pipe = _make_pipeline(prob_model)
+        pipe.set_params(**loaded_best_params)
+        metrics, y_pred, _ = run_probe(
+            X_train,
+            y_train,  # unused when split provided
+            pipe,
+            test_size=test_size,
+            random_state=random_state,
+            exp_dirs=exp_dirs,
+            model_name=model_name,
+            run_stats=run_stats,
+            n_bootstrap=n_bootstrap,
+            confidence=confidence,
+            X_train=X_train,
+            X_test=X_test,
+            y_train=y_train,
+            y_test=y_test,
+        )
+        search = _BestParamsOnly(loaded_best_params)
+        return search, metrics, y_pred
 
     search = tune_probe(
         X_train, y_train,
@@ -267,6 +347,17 @@ def run_cv_search(
         model_name=model_name,
         refit=refit,
     )
+
+    if reuse_best_params and exp_dirs is not None:
+        cache_dir = best_params_cache_dir
+        if cache_dir is None:
+            cache_dir = exp_dirs["root"].parent / "shared_best_params"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_fp = cache_dir / f"{model_name}_best_params.json"
+        # Avoid overwriting if already present (keeps first-tuned values stable).
+        if not cache_fp.exists():
+            with open(cache_fp, "w") as f:
+                json.dump(search.best_params_, f, indent=2)
 
     # Refit best pipeline on the same train set, then evaluate on test
     metrics, y_pred, _ = run_probe(

@@ -70,6 +70,8 @@ def run_probes(
     y: np.ndarray,
     probe_entries: List[Dict[str, Any]],
     n_jobs: int,
+    reuse_best_params: bool = False,
+    best_params_cache_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     """
     For each probe entry: if param_grid is present, tune then run (best estimator)
@@ -101,6 +103,8 @@ def run_probes(
                 exp_dirs=exp_dirs,
                 model_name=name,
                 run_stats=True,
+                reuse_best_params=reuse_best_params,
+                best_params_cache_dir=best_params_cache_dir,
             )
             run_dict = {
                 "experiment": f"{target_name}_{name}",
@@ -132,11 +136,21 @@ def linear_models(
     X: np.ndarray,
     y: np.ndarray,
     n_jobs: int = -1,
+    reuse_best_params: bool = False,
+    best_params_cache_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     """Run all registered linear probes. Use LINEAR_PROBES in prob_registry to add more."""
     if n_jobs == -1:
         n_jobs = _cpu_budget()
-    return run_probes(prob_config, X, y, LINEAR_PROBES, n_jobs)
+    return run_probes(
+        prob_config,
+        X,
+        y,
+        LINEAR_PROBES,
+        n_jobs,
+        reuse_best_params=reuse_best_params,
+        best_params_cache_dir=best_params_cache_dir,
+    )
 
 
 def non_linear_models(
@@ -144,11 +158,21 @@ def non_linear_models(
     X: np.ndarray,
     y: np.ndarray,
     n_jobs: int = -1,
+    reuse_best_params: bool = False,
+    best_params_cache_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
     """Run all registered non-linear probes. Use NONLINEAR_PROBES in prob_registry to add more."""
     if n_jobs == -1:
         n_jobs = _cpu_budget()
-    return run_probes(prob_config, X, y, NONLINEAR_PROBES, n_jobs)
+    return run_probes(
+        prob_config,
+        X,
+        y,
+        NONLINEAR_PROBES,
+        n_jobs,
+        reuse_best_params=reuse_best_params,
+        best_params_cache_dir=best_params_cache_dir,
+    )
 
 
 # ─────────────────────────────────────────────────────────────
@@ -164,6 +188,16 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     all_runs: List[Dict[str, Any]] = []
     layer_nums = [1, 2, 3]
 
+    reuse_best_params = os.getenv("PROB_REUSE_BEST_PARAMS", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    best_params_cache_dir_env = os.getenv("PROB_BEST_PARAMS_CACHE_DIR")
+    best_params_cache_dir = (
+        Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
+    )
+
     sub_file = _ROOT / "prob" / "cluster" / "run_prob.sub"
     n_jobs = _cpu_budget(sub_file=sub_file)
 
@@ -178,8 +212,26 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
         prob_config.update({"layer_num": layer}, allow_duplicates=True)
 
-        all_runs.extend(linear_models(prob_config, X, y, n_jobs=n_jobs))
-        all_runs.extend(non_linear_models(prob_config, X, y, n_jobs=n_jobs))
+        all_runs.extend(
+            linear_models(
+                prob_config,
+                X,
+                y,
+                n_jobs=n_jobs,
+                reuse_best_params=reuse_best_params,
+                best_params_cache_dir=best_params_cache_dir,
+            )
+        )
+        all_runs.extend(
+            non_linear_models(
+                prob_config,
+                X,
+                y,
+                n_jobs=n_jobs,
+                reuse_best_params=reuse_best_params,
+                best_params_cache_dir=best_params_cache_dir,
+            )
+        )
 
     # Single summary CSV after all layers
     summary_df = pd.DataFrame(all_runs)
