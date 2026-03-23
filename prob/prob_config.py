@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 import kinodata.configuration as cfg
 
@@ -73,5 +74,10 @@ def get_ds_load_config(**kwargs):
     target_dir = output_dir.parents[2] / "targets"
 
     cfg.register(config_name, **{**config_args, "output_dir": output_dir, "target_dir": target_dir})
-    prob_ds_config = cfg.get(config_name).update_from_args() # this activates the argparse itself
-    return prob_ds_config
+    prob_ds_config = cfg.get(config_name)
+
+    # In notebooks, argparse sees Jupyter kernel args and can crash.
+    # Keep CLI behavior unchanged: only parse argv outside ipykernel.
+    if "ipykernel" in sys.modules:
+        return prob_ds_config
+    return prob_ds_config.update_from_args()
