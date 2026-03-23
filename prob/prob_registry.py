@@ -35,7 +35,6 @@ def _rf():
 def _mlp():
     return MLPRegressor(
         random_state=RANDOM_STATE,
-        n_jobs=1,
         early_stopping=True,
         max_iter=200,
     )
