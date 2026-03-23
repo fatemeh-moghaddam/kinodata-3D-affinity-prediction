@@ -187,6 +187,7 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     """
     all_runs: List[Dict[str, Any]] = []
     layer_nums = [1, 2, 3]
+    target_file = prob_config.get("target_file", TARGET_FILE)
 
     reuse_best_params = os.getenv("PROB_REUSE_BEST_PARAMS", "0").lower() in {
         "1",
@@ -204,9 +205,9 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     y = load_y_by_ids(
         prob_config.output_dir,
         target_dir=prob_config.target_dir,
-        targets_file=TARGET_FILE,
+        targets_file=target_file,
     )
-    target_name = Path(TARGET_FILE).stem
+    target_name = Path(target_file).stem
 
     for layer in layer_nums:
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
@@ -245,6 +246,7 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     ds_load_config = get_ds_load_config()
+    target_file = ds_load_config.get("target_file", TARGET_FILE)
 
     wandb.init(
         project="probing",
@@ -252,7 +254,7 @@ if __name__ == "__main__":
         config={
             **ds_load_config,
             "random_state": RANDOM_STATE,
-            "target_file": TARGET_FILE,
+            "target_file": target_file,
         },
     )
     main(ds_load_config)

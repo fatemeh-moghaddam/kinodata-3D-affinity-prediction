@@ -11,5 +11,11 @@ export WANDB_API_KEY=$(cat wandb_api_key)
 python3 -m pip install --upgrade "pip<24"
 pip install --upgrade "wandb>=0.15,<1" colorama
 
+# Keep math backends single-threaded to avoid CPU oversubscription on cluster.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+export OPENBLAS_NUM_THREADS=1
+export NUMEXPR_NUM_THREADS=1
+
 # Run from the job's working directory; assume required code is transferred with the job
-python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" --device "cuda"
+python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" --target_file "$5" --device "cuda"
