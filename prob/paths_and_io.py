@@ -82,7 +82,7 @@ def get_split_file(
         p = p / split_type
     else:
         p = p / f"filter_predicted_rmsd_le{rmsd_threshold}.00" / split_type
-    p = p / f"{split_fold + 1}:5.csv"
+    p = p / f"{split_fold + 1}_5.csv"
     if not p.exists():
         raise FileNotFoundError(f"Split file not found: {p}")
     return p
@@ -166,14 +166,24 @@ def load_y_by_ids(
         targets_file: str = None,
         ids_file: str = "ids.pt",
         default_value: int = 0,
+        shuffle_idents: bool = False,
+        random_state: int = 96,
         ) -> np.ndarray:
-    """ Load target values corresponding to the given ids from a targets .pt file."""
+    """
+    Load target values corresponding to ids from a targets .pt file.
+
+    If shuffle_idents=True, ids are permuted before lookup to create a
+    random-ident baseline target assignment while preserving y distribution.
+    """
     if targets_file is None:
         raise ValueError("targets_file must be provided")
     ids = load_out_tensor(in_dir, ids_file)
     full_targets = load_out_tensor(target_dir, targets_file)
     # for easier indexing
     ids = ids.detach().cpu().numpy().astype(int)
+    if shuffle_idents:
+        rng = np.random.default_rng(random_state)
+        ids = rng.permutation(ids)
     y = np.array(
         [full_targets.get(int(ident), default_value) for ident in ids],
         dtype="int64",

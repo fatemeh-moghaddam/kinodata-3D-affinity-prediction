@@ -72,13 +72,14 @@ def run_probes(
     n_jobs: int,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
+    target_name_override: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     For each probe entry: if param_grid is present, tune then run (best estimator)
     and write tuning + run artifacts (including statistical_tests in summary).
     If param_grid is missing or empty, run_probe only with the given estimator.
     """
-    target_name = Path(prob_config.get("target_file", TARGET_FILE)).stem
+    target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
     layer = prob_config.layer_num
     all_runs: List[Dict[str, Any]] = []
 
@@ -138,6 +139,7 @@ def linear_models(
     n_jobs: int = -1,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
+    target_name_override: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Run all registered linear probes. Use LINEAR_PROBES in prob_registry to add more."""
     if n_jobs == -1:
@@ -150,6 +152,48 @@ def linear_models(
         n_jobs,
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
+        target_name_override=target_name_override,
+    )
+
+
+def linear_models_shuffled_ident_baseline(
+    prob_config: cfg.Config,
+    X: np.ndarray,
+    *,
+    n_jobs: int = -1,
+    random_state: int = RANDOM_STATE,
+    baseline_tag: str = "shuffled_ident",
+    target_file: Optional[str] = None,
+    reuse_best_params: bool = False,
+    best_params_cache_dir: Optional[Path] = None,
+) -> List[Dict[str, Any]]:
+    """
+    Run linear probes on a shuffled-ident baseline target assignment.
+
+    This permutes id->target mapping before loading y, producing a random-label
+    control with the same marginal target distribution.
+    """
+    if n_jobs == -1:
+        n_jobs = _cpu_budget()
+
+    target_file = target_file or prob_config.get("target_file", TARGET_FILE)
+    y_shuffled = load_y_by_ids(
+        prob_config.output_dir,
+        target_dir=prob_config.target_dir,
+        targets_file=target_file,
+        shuffle_idents=True,
+        random_state=random_state,
+    )
+    baseline_target_name = f"{Path(target_file).stem}_{baseline_tag}"
+
+    return linear_models(
+        prob_config,
+        X,
+        y_shuffled,
+        n_jobs=n_jobs,
+        reuse_best_params=reuse_best_params,
+        best_params_cache_dir=best_params_cache_dir,
+        target_name_override=baseline_target_name,
     )
 
 
