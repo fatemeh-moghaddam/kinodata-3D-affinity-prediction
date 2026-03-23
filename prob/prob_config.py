@@ -43,10 +43,13 @@ def get_ds_load_config(**kwargs):
             split_index=None,
             dtype_out=None,  # None means no dtype conversion
             device="cpu",
+            target_file=TARGET_FILE,
         )
-    
-    if kwargs.keys() - defaults.keys() != set():
-        raise ValueError(f"Invalid arguments: {kwargs.keys() - defaults.keys()}")
+
+    allowed_keys = set(defaults.keys()) | {"config_name"}
+    invalid = kwargs.keys() - allowed_keys
+    if invalid:
+        raise ValueError(f"Invalid arguments: {invalid}")
 
     if "gnn_model_type" in kwargs:
         assert kwargs["gnn_model_type"] in ["CGNN-3D", "CGNN", "DTI"], "Invalid GNN model type"
@@ -56,17 +59,11 @@ def get_ds_load_config(**kwargs):
         assert kwargs["filter_rmsd_max_value"] in set({2, 4, 6, 2.00, 4.00, 6.00, None}), "Invalid RMSD threshold"
     if "split_index" in kwargs:
         assert kwargs["split_index"] in set({0, 1, 2, 3, 4, None}), "Invalid split index"
-    if "config_name" in kwargs:
-        config_name = kwargs["config_name"]
-    else:
-        config_name = "prob_ds_load"
-    if "target_file" in kwargs:
-        target_file = kwargs["target_file"]
-    else:
-        target_file = TARGET_FILE
+    config_name = kwargs.get("config_name", "prob_ds_load")
+    target_file = kwargs.get("target_file", defaults["target_file"])
 
     # merge: kwargs overrides defaults
-    config_args = {**defaults, **kwargs}
+    config_args = {**defaults, **{k: v for k, v in kwargs.items() if k != "config_name"}}
     # Initialize the config with the defaults and kwargs
     output_dir = get_out_dir(config_args["gnn_model_type"],
                                 config_args["filter_rmsd_max_value"],
