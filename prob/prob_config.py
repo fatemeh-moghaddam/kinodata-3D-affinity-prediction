@@ -45,6 +45,8 @@ def get_ds_load_config(**kwargs):
             dtype_out=None,  # None means no dtype conversion
             device="cpu",
             target_file=TARGET_FILE,
+            run_shuffled_baseline=0,
+            baseline_tag="shuffled_ident",
         )
 
     allowed_keys = set(defaults.keys()) | {"config_name"}

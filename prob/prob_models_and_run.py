@@ -230,6 +230,7 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     probes per layer, write per-model artifacts and a single summary CSV.
     """
     all_runs: List[Dict[str, Any]] = []
+    baseline_runs: List[Dict[str, Any]] = []
     layer_nums = [1, 2, 3]
     target_file = prob_config.get("target_file", TARGET_FILE)
 
@@ -241,6 +242,19 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     best_params_cache_dir_env = os.getenv("PROB_BEST_PARAMS_CACHE_DIR")
     best_params_cache_dir = (
         Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
+    )
+    run_shuffled_baseline_cfg = int(prob_config.get("run_shuffled_baseline", 0))
+    run_shuffled_baseline_env = os.getenv("PROB_RUN_SHUFFLED_BASELINE", "0").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    run_shuffled_baseline = bool(run_shuffled_baseline_cfg) or run_shuffled_baseline_env
+    baseline_tag = str(
+        prob_config.get(
+            "baseline_tag",
+            os.getenv("PROB_BASELINE_TAG", "shuffled_ident"),
+        )
     )
 
     sub_file = _ROOT / "prob" / "cluster" / "run_prob.sub"
@@ -278,12 +292,34 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
             )
         )
 
+        if run_shuffled_baseline:
+            baseline_runs.extend(
+                linear_models_shuffled_ident_baseline(
+                    prob_config,
+                    X,
+                    n_jobs=n_jobs,
+                    random_state=RANDOM_STATE,
+                    baseline_tag=baseline_tag,
+                    target_file=target_file,
+                    reuse_best_params=reuse_best_params,
+                    best_params_cache_dir=best_params_cache_dir,
+                )
+            )
+
     # Single summary CSV after all layers
     summary_df = pd.DataFrame(all_runs)
     summary_dir = Path(prob_config.output_dir) / target_name / "experiments"
     summary_dir.mkdir(parents=True, exist_ok=True)
     summary_csv = summary_dir / "summary_runs.csv"
     summary_df.to_csv(summary_csv, index=False)
+
+    if baseline_runs:
+        baseline_target_name = f"{Path(target_file).stem}_{baseline_tag}"
+        baseline_summary_df = pd.DataFrame(baseline_runs)
+        baseline_summary_dir = Path(prob_config.output_dir) / baseline_target_name / "experiments"
+        baseline_summary_dir.mkdir(parents=True, exist_ok=True)
+        baseline_summary_csv = baseline_summary_dir / "summary_runs.csv"
+        baseline_summary_df.to_csv(baseline_summary_csv, index=False)
 
     return all_runs
 
