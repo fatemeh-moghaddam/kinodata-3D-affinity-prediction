@@ -37,7 +37,7 @@ import wandb
 RANDOM_STATE = 96
 N_SPLITS_CV = 5
 TEST_SIZE = 0.1
-TARGET_FILE = "nitrogen_counts.pt"
+TARGET_FILE = None
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1]))
 
 
@@ -250,6 +250,13 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
         "yes",
     }
     run_shuffled_baseline = bool(run_shuffled_baseline_cfg) or run_shuffled_baseline_env
+    run_non_linear_models_cfg = int(prob_config.get("run_non_linear_models", 1))
+    run_non_linear_models_env = os.getenv("PROB_RUN_NON_LINEAR_MODELS", "1").lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+    run_non_linear_models = bool(run_non_linear_models_cfg) or run_non_linear_models_env
     baseline_tag = str(
         prob_config.get(
             "baseline_tag",
@@ -281,16 +288,17 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
                 best_params_cache_dir=best_params_cache_dir,
             )
         )
-        all_runs.extend(
-            non_linear_models(
-                prob_config,
-                X,
-                y,
-                n_jobs=n_jobs,
-                reuse_best_params=reuse_best_params,
-                best_params_cache_dir=best_params_cache_dir,
+        if run_non_linear_models:
+            all_runs.extend(
+                non_linear_models(
+                    prob_config,
+                    X,
+                    y,
+                    n_jobs=n_jobs,
+                    reuse_best_params=reuse_best_params,
+                    best_params_cache_dir=best_params_cache_dir,
+                )
             )
-        )
 
         if run_shuffled_baseline:
             baseline_runs.extend(
