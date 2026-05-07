@@ -300,7 +300,7 @@ if __name__ == "__main__":
     manifest_payload["artifacts"].update(
         {
             "aggregated_ids": str(output_root_dir / "ids.pt"),
-            "aggregated_layers": [str(output_root_dir / f"layer_{i+1}.pt") for i in range(num_layers)],
+            "aggregated_layers": [str(output_root_dir / f"{layer_name}.pt") for layer_name in layer_names],
         }
     )
     write_manifest(output_root_dir, manifest_payload)
