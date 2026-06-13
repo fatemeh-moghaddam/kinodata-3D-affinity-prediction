@@ -234,29 +234,19 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     layer_nums = [1, 2, 3]
     target_file = prob_config.get("target_file", TARGET_FILE)
 
-    reuse_best_params = os.getenv("PROB_REUSE_BEST_PARAMS", "1").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
+    def _flag(env_key: str, cfg_key: str, default: bool) -> bool:
+        raw = os.getenv(env_key)
+        if raw is not None:
+            return raw.lower() in {"1", "true", "yes"}
+        return bool(int(prob_config.get(cfg_key, int(default))))
+
+    reuse_best_params = _flag("PROB_REUSE_BEST_PARAMS", "reuse_best_params", True)
     best_params_cache_dir_env = os.getenv("PROB_BEST_PARAMS_CACHE_DIR")
     best_params_cache_dir = (
         Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
     )
-    run_shuffled_baseline_cfg = int(prob_config.get("run_shuffled_baseline", 1))
-    run_shuffled_baseline_env = os.getenv("PROB_RUN_SHUFFLED_BASELINE", "1").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    run_shuffled_baseline = bool(run_shuffled_baseline_cfg) or run_shuffled_baseline_env
-    run_non_linear_models_cfg = int(prob_config.get("run_non_linear_models", 0))
-    run_non_linear_models_env = os.getenv("PROB_RUN_NON_LINEAR_MODELS", "0").lower() in {
-        "1",
-        "true",
-        "yes",
-    }
-    run_non_linear_models = bool(run_non_linear_models_cfg) or run_non_linear_models_env
+    run_shuffled_baseline = _flag("PROB_RUN_SHUFFLED_BASELINE", "run_shuffled_baseline", True)
+    run_non_linear_models = _flag("PROB_RUN_NON_LINEAR_MODELS", "run_non_linear_models", False)
     baseline_tag = str(
         prob_config.get(
             "baseline_tag",
