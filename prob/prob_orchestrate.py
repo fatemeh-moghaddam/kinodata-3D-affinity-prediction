@@ -128,6 +128,8 @@ def run_probes(
                 "layer": layer,
                 **metrics,
             }
+        if wandb.run is not None:
+            wandb.log(run_dict)
         all_runs.append(run_dict)
 
     return all_runs
@@ -231,11 +233,18 @@ def non_linear_models(
 # ─────────────────────────────────────────────────────────────
 
 
-def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
+def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any]]:
     """
     Load targets and layer representations, run linear (and optionally non-linear)
     probes per layer, write per-model artifacts and a single summary CSV.
     """
+    if use_wandb:
+        wandb.init(
+            project="probing",
+            name=f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            config={**prob_config, "random_state": RANDOM_STATE},
+        )
+
     all_runs: List[Dict[str, Any]] = []
     baseline_runs: List[Dict[str, Any]] = []
     layer_nums = [1, 2, 3]
@@ -341,15 +350,4 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
 
 if __name__ == "__main__":
     ds_load_config = get_ds_load_config()
-    target_file = ds_load_config.get("target_file", TARGET_FILE)
-
-    wandb.init(
-        project="probing",
-        name=f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        config={
-            **ds_load_config,
-            "random_state": RANDOM_STATE,
-            "target_file": target_file,
-        },
-    )
-    main(ds_load_config)
+    main(ds_load_config, use_wandb=True)
