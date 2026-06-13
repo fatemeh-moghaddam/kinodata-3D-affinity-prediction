@@ -22,8 +22,8 @@ from tqdm import tqdm
 
 import kinodata.configuration as cfg
 from kinodata.types import NodeType
-from prob.builds_and_runs import build_gnn_model, build_kd_ds
-from prob.generate_prob_ds import ProbingJobSpec, _validate_spec, set_probing_config
+from prob.repr_extraction_utils import build_gnn_model, build_kd_ds
+from prob.run_extraction import ProbingJobSpec, _validate_spec, set_probing_config
 from prob.paths_and_io import get_out_dir, save_out_tensor
 from prob.resloves_and_transforms import aggregate_folds, aggregate_ids, dtype_resolve
 

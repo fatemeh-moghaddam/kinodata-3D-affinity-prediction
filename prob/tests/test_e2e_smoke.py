@@ -8,7 +8,7 @@ from kinodata.data import KinodataDocked
 from kinodata.model import ComplexTransformer
 
 from prob.utils import build_kd_ds, build_gnn_model
-from prob.generate_prob_ds import set_probing_config
+from prob.run_extraction import set_probing_config
 
 import pytest
 

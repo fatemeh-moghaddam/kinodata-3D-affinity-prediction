@@ -1,4 +1,4 @@
-from prob.generate_prob_ds import set_probing_config
+from prob.run_extraction import set_probing_config
 
 
 

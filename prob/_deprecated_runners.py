@@ -1,6 +1,6 @@
 """
 Deprecated / not-yet-used runner helpers (atom-level probing, unbatching).
-Kept for reference only; not imported by builds_and_runs.
+Kept for reference only; not imported by repr_extraction_utils.
 """
 # Unbatching functions, NOT TESTED YET
 #

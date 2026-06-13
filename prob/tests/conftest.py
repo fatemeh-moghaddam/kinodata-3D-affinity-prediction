@@ -5,7 +5,7 @@ from pathlib import Path
 import os
 
 
-from prob.generate_prob_ds import set_probing_config
+from prob.run_extraction import set_probing_config
 from prob.utils import build_kd_ds, build_gnn_model
 
 from kinodata.data import KinodataDocked

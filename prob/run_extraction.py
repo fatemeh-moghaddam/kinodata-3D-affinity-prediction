@@ -16,7 +16,7 @@ import wandb
 
 import kinodata.configuration as cfg
 
-from prob.builds_and_runs import build_gnn_model, build_kd_ds, run_fold
+from prob.repr_extraction_utils import build_gnn_model, build_kd_ds, run_fold
 from prob.paths_and_io import (
     get_gnn_config_path,
     get_model_ckpt,
