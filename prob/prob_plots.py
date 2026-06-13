@@ -38,8 +38,9 @@ def _resolve_save_path(save_path: Optional[Path | str]) -> Optional[Path]:
 
     Behaviour:
     - If save_path is None, return None (no saving).
-    - Otherwise, interpret save_path as "<experiment_root>/<filename_stem>[.ext]"
-      and always save under a "figures" subdirectory with a ".png" suffix.
+    - Otherwise, interpret save_path as "<experiment_root>/<filename_stem>[.ext]".
+      Save under a "figures" subdirectory with a ".png" suffix, unless
+      save_path already points inside a "figures" directory.
 
     Example:
         save_path = exp_root / "parity_layer3"
@@ -52,7 +53,8 @@ def _resolve_save_path(save_path: Optional[Path | str]) -> Optional[Path]:
     parent = p.parent
     name = p.name
 
-    parent = parent / "figures"
+    if parent.name != "figures":
+        parent = parent / "figures"
     parent.mkdir(parents=True, exist_ok=True)
 
     if not name.endswith(".png"):
