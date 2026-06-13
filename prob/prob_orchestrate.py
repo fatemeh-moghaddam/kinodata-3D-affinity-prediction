@@ -3,7 +3,7 @@ Orchestrate probing experiments: load X/y, run registered linear and non-linear
 probes per layer, and aggregate results.
 
 To add a probe: append an entry to LINEAR_PROBES or NONLINEAR_PROBES in
-prob_registry (or pass a custom list to run_probes). Statistical analysis
+prob_models (or pass a custom list to run_probes). Statistical analysis
 lives in prob_stats; metrics in prob_metrics; CV pipeline in prob_run.
 """
 from __future__ import annotations
@@ -25,7 +25,7 @@ from prob.prob_run import run_cv_search, run_probe, tune_probe
 
 # Probe registry: add entries here to run new linear or non-linear probes.
 # For metrics/stats use prob.prob_metrics and prob.prob_stats.
-from prob.prob_registry import LINEAR_PROBES, NONLINEAR_PROBES
+from prob.prob_models import LINEAR_PROBES, NONLINEAR_PROBES
 
 import wandb
 
@@ -141,7 +141,7 @@ def linear_models(
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    """Run all registered linear probes. Use LINEAR_PROBES in prob_registry to add more."""
+    """Run all registered linear probes. Use LINEAR_PROBES in prob_models to add more."""
     if n_jobs == -1:
         n_jobs = _cpu_budget()
     return run_probes(
@@ -205,7 +205,7 @@ def non_linear_models(
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
 ) -> List[Dict[str, Any]]:
-    """Run all registered non-linear probes. Use NONLINEAR_PROBES in prob_registry to add more."""
+    """Run all registered non-linear probes. Use NONLINEAR_PROBES in prob_models to add more."""
     if n_jobs == -1:
         n_jobs = _cpu_budget()
     return run_probes(

@@ -2,7 +2,7 @@
 Registry of probe models and their GridSearchCV param grids.
 
 Add or remove entries here to change which linear/non-linear probes run
-without editing prob_models_and_run. Each entry is:
+without editing prob_orchestrate. Each entry is:
   {"name": str, "estimator": sklearn-like estimator, "param_grid": dict}
 Param grid keys must use the "model__" prefix for the pipeline.
 """
