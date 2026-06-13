@@ -9,7 +9,7 @@ from tqdm import tqdm
 from kinodata.data import KinodataDocked
 from kinodata.transform import TransformToComplexGraph
 
-from prob.paths_and_io import save_out_tensor, _ROOT
+from prob.paths_and_io import save_out_tensor
 
 
 
@@ -44,7 +44,7 @@ def count_n_dataset(dataset: List[HeteroData],
 
 
 def caculate_save_nitrogen_counts(dataset: List[HeteroData],
-                    output_dir: Path = _ROOT/"data/probing/targets",
+                    output_dir: Path,
                     node_type: str = "ligand",
                     smiles_key: str = "smiles",
                     ) -> List[int]:
