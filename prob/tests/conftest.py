@@ -12,7 +12,7 @@ from kinodata.data import KinodataDocked
 from kinodata.transform import TransformToComplexGraph
 from kinodata.model.complex_transformer import make_model, ComplexTransformer
 
-from prob.utils import load_config, load_model_from_checkpoint
+from prob.prob_config import load_config, load_model_from_checkpoint
 from prob.prob_dataset import GraphReprs, ProbingDataset
 from .test_config import *
 
