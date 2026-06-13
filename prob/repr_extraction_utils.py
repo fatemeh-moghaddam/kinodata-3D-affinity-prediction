@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1]))
-CPU_COUNT = os.environ.get("CPU_COUNT", "16")
+CPU_COUNT = int(os.environ.get("CPU_COUNT", "16"))
 
 GNN_MAKERS = {
     "DTI": make_dti_baseline,
