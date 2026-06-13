@@ -66,6 +66,7 @@ def get_split_file(
         split_type: str,
         split_fold: int,
         rmsd_threshold: int = None,
+        k_fold: int = 5,
         root: Path = _ROOT
     ) -> Path:
     """ Get the path to the split file, which has a different pattern than model directory.
@@ -73,6 +74,7 @@ def get_split_file(
         split_type (str): The type of split, e.g., "random-k-fold", "scaffold-k-fold".
         split_fold (int): The fold number.
         rmsd_threshold (int, optional): The RMSD threshold. Defaults to 0.
+        k_fold (int, optional): Total number of folds. Defaults to 5.
         root (Path, optional): The root path. Defaults to the parent directory of this file.
     Returns:
         Path: The path to the split csv file.
@@ -82,10 +84,16 @@ def get_split_file(
         p = p / split_type
     else:
         p = p / f"filter_predicted_rmsd_le{rmsd_threshold}.00" / split_type
-    p = p / f"{split_fold + 1}_5.csv"
-    if not p.exists():
-        raise FileNotFoundError(f"Split file not found: {p}")
-    return p
+    candidates = list(p.glob(f"{split_fold + 1}*{k_fold}.csv"))
+    if len(candidates) == 0:
+        raise FileNotFoundError(
+            f"No split file found for fold {split_fold + 1}/{k_fold} in {p}"
+        )
+    if len(candidates) > 1:
+        raise RuntimeError(
+            f"Ambiguous split files for fold {split_fold + 1}/{k_fold} in {p}: {candidates}"
+        )
+    return candidates[0]
 
 
 def get_out_dir(
