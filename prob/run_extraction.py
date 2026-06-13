@@ -47,7 +47,7 @@ class ProbingJobSpec:
     device: str = "cpu"
     dtype_out: str | None = None
     k_fold: int = 5
-    seed: int = 123
+    seed: int = 96
     wandb_mode: str = "disabled"
 
 
@@ -145,7 +145,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         dtype_out=None,  # None means no dtype conversion
         device="cpu",
         k_fold=5,
-        seed=123,
+        seed=96,
         parse_args=False,  # keep CLI parsing out of this function by default
     )
 
@@ -220,7 +220,7 @@ if __name__ == "__main__":
     parser.add_argument("--filter_rmsd_max_value", default=2, type=float)
     parser.add_argument("--k_fold", default=5, type=int)
     parser.add_argument("--wandb_mode", default="disabled", choices=["disabled", "online", "offline"])
-    parser.add_argument("--seed", default=123, type=int)
+    parser.add_argument("--seed", default=96, type=int)
     parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--dtype_out", default=None, type=str)
     args = parser.parse_args()

@@ -91,7 +91,7 @@ def main() -> None:
     )
     parser.add_argument("--filter_rmsd_max_value", default=2, type=int)
     parser.add_argument("--k_fold", default=5, type=int)
-    parser.add_argument("--seed", default=123, type=int)
+    parser.add_argument("--seed", default=96, type=int)
     parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--dtype_out", default=None, type=str)
     args = parser.parse_args()
