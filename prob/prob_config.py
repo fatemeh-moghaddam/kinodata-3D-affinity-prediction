@@ -6,7 +6,7 @@ import kinodata.configuration as cfg
 from prob.paths_and_io import get_out_dir
 
 
-TARGET_FILE = "nitrogen_counts.pt"  # you can change per experiment
+TARGET_FILE = None
 # ─────────────────────────────────────────────────────────────
 # General Config
 # ─────────────────────────────────────────────────────────────
@@ -24,6 +24,8 @@ TARGET_FILE = "nitrogen_counts.pt"  # you can change per experiment
 # ─────────────────────────────────────────────────────────────
 
 def build_experiment_name(ds_cfg: cfg.Config, layer_num: int) -> str:
+    if not ds_cfg.target_file:
+        raise ValueError("target_file must be set before building an experiment name")
     parts = [
         f"gnn={ds_cfg.gnn_model_type}",
         f"rmsd={ds_cfg.filter_rmsd_max_value}",
