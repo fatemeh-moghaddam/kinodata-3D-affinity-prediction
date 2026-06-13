@@ -263,6 +263,16 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
         targets_file=target_file,
     )
     target_name = Path(target_file).stem
+    baseline_target_name = f"{target_name}_{baseline_tag}"
+
+    if run_shuffled_baseline:
+        y_shuffled = load_y_by_ids(
+            prob_config.output_dir,
+            target_dir=prob_config.target_dir,
+            targets_file=target_file,
+            shuffle_idents=True,
+            random_state=RANDOM_STATE,
+        )
 
     for layer in layer_nums:
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
@@ -292,15 +302,14 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
 
         if run_shuffled_baseline:
             baseline_runs.extend(
-                linear_models_shuffled_ident_baseline(
+                linear_models(
                     prob_config,
                     X,
+                    y_shuffled,
                     n_jobs=n_jobs,
-                    random_state=RANDOM_STATE,
-                    baseline_tag=baseline_tag,
-                    target_file=target_file,
                     reuse_best_params=reuse_best_params,
                     best_params_cache_dir=best_params_cache_dir,
+                    target_name_override=baseline_target_name,
                 )
             )
 
@@ -312,7 +321,6 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
     summary_df.to_csv(summary_csv, index=False)
 
     if baseline_runs:
-        baseline_target_name = f"{Path(target_file).stem}_{baseline_tag}"
         baseline_summary_df = pd.DataFrame(baseline_runs)
         baseline_summary_dir = Path(prob_config.output_dir) / baseline_target_name / "experiments"
         baseline_summary_dir.mkdir(parents=True, exist_ok=True)
