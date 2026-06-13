@@ -70,6 +70,7 @@ def run_probes(
     y: np.ndarray,
     probe_entries: List[Dict[str, Any]],
     n_jobs: int,
+    layer_num: int,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
@@ -80,7 +81,7 @@ def run_probes(
     If param_grid is missing or empty, run_probe only with the given estimator.
     """
     target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
-    layer = prob_config.layer_num
+    layer = layer_num
     all_runs: List[Dict[str, Any]] = []
 
     for entry in probe_entries:
@@ -136,6 +137,7 @@ def linear_models(
     prob_config: cfg.Config,
     X: np.ndarray,
     y: np.ndarray,
+    layer_num: int,
     n_jobs: int = -1,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
@@ -150,6 +152,7 @@ def linear_models(
         y,
         LINEAR_PROBES,
         n_jobs,
+        layer_num=layer_num,
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
         target_name_override=target_name_override,
@@ -159,6 +162,7 @@ def linear_models(
 def linear_models_shuffled_ident_baseline(
     prob_config: cfg.Config,
     X: np.ndarray,
+    layer_num: int,
     *,
     n_jobs: int = -1,
     random_state: int = RANDOM_STATE,
@@ -190,6 +194,7 @@ def linear_models_shuffled_ident_baseline(
         prob_config,
         X,
         y_shuffled,
+        layer_num=layer_num,
         n_jobs=n_jobs,
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
@@ -201,6 +206,7 @@ def non_linear_models(
     prob_config: cfg.Config,
     X: np.ndarray,
     y: np.ndarray,
+    layer_num: int,
     n_jobs: int = -1,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
@@ -214,6 +220,7 @@ def non_linear_models(
         y,
         NONLINEAR_PROBES,
         n_jobs,
+        layer_num=layer_num,
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
     )
@@ -276,13 +283,13 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
 
     for layer in layer_nums:
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
-        prob_config.update({"layer_num": layer}, allow_duplicates=True)
 
         all_runs.extend(
             linear_models(
                 prob_config,
                 X,
                 y,
+                layer_num=layer,
                 n_jobs=n_jobs,
                 reuse_best_params=reuse_best_params,
                 best_params_cache_dir=best_params_cache_dir,
@@ -294,6 +301,7 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
                     prob_config,
                     X,
                     y,
+                    layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
                     best_params_cache_dir=best_params_cache_dir,
@@ -306,6 +314,7 @@ def main(prob_config: cfg.Config) -> List[Dict[str, Any]]:
                     prob_config,
                     X,
                     y_shuffled,
+                    layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
                     best_params_cache_dir=best_params_cache_dir,
