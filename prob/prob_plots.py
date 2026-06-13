@@ -11,6 +11,8 @@ Design goals:
 from __future__ import annotations
 
 from pathlib import Path
+
+from prob.paths_and_io import EXP_DIR_FIGURES
 from typing import Optional
 
 import matplotlib.pyplot as plt
@@ -53,8 +55,8 @@ def _resolve_save_path(save_path: Optional[Path | str]) -> Optional[Path]:
     parent = p.parent
     name = p.name
 
-    if parent.name != "figures":
-        parent = parent / "figures"
+    if parent.name != EXP_DIR_FIGURES:
+        parent = parent / EXP_DIR_FIGURES
     parent.mkdir(parents=True, exist_ok=True)
 
     if not name.endswith(".png"):

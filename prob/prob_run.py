@@ -21,6 +21,7 @@ from sklearn.model_selection import GridSearchCV, KFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
+from prob.paths_and_io import EXP_DIR_ARTIFACTS, EXP_DIR_FIGURES, EXP_DIR_REPORTS
 from prob.prob_metrics import evaluate_predictions, regression_scorers
 from prob.prob_plots import plot_parity, plot_residuals
 from prob.prob_stats import run_probe_statistical_tests
@@ -89,8 +90,8 @@ def _write_tuning_artifacts(
     model_name: str,
 ) -> None:
     """Write only tuning outputs: cv_results.csv and best_params.json."""
-    artifacts_dir = exp_dirs.get("artifacts")
-    reports_dir = exp_dirs.get("reports")
+    artifacts_dir = exp_dirs.get(EXP_DIR_ARTIFACTS)
+    reports_dir = exp_dirs.get(EXP_DIR_REPORTS)
 
     if artifacts_dir is not None:
         cv_df = pd.DataFrame(search.cv_results_)
@@ -186,9 +187,9 @@ def _write_run_artifacts(
     model_name: str,
 ) -> None:
     """Write evaluation outputs: predictions CSV, summary JSON (with stats), and figures."""
-    artifacts_dir = exp_dirs.get("artifacts")
-    reports_dir = exp_dirs.get("reports")
-    figures_dir = exp_dirs.get("figures")
+    artifacts_dir = exp_dirs.get(EXP_DIR_ARTIFACTS)
+    reports_dir = exp_dirs.get(EXP_DIR_REPORTS)
+    figures_dir = exp_dirs.get(EXP_DIR_FIGURES)
 
     if artifacts_dir is not None:
         pred_df = pd.DataFrame({"y_true": y_test, "y_pred": y_pred})
@@ -289,7 +290,7 @@ def run_cv_search(
     # 1) best_params written for the current exp_dirs (re-run of same experiment)
     # 2) a shared cache directory that is common across layers for the same model/target
     if reuse_best_params and exp_dirs is not None:
-        current_best_params_fp = _best_params_file(exp_dirs.get("reports"))
+        current_best_params_fp = _best_params_file(exp_dirs.get(EXP_DIR_REPORTS))
         if current_best_params_fp is not None and current_best_params_fp.exists():
             with open(current_best_params_fp, "r") as f:
                 loaded_best_params = _normalize_loaded_best_params(json.load(f))
@@ -307,7 +308,7 @@ def run_cv_search(
     if loaded_best_params is not None:
         # Ensure per-exp best params exist too (keeps artifacts consistent).
         if exp_dirs is not None:
-            reports_dir = exp_dirs.get("reports")
+            reports_dir = exp_dirs.get(EXP_DIR_REPORTS)
             if reports_dir is not None:
                 reports_dir.mkdir(parents=True, exist_ok=True)
                 fp = reports_dir / f"{model_name}_best_params.json"

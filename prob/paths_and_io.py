@@ -116,6 +116,11 @@ def get_out_dir(
     return p
 
 
+EXP_DIR_FIGURES = "figures"
+EXP_DIR_ARTIFACTS = "artifacts"
+EXP_DIR_REPORTS = "reports"
+
+
 def get_exp_dirs(out_root: str | Path, target: str , prob_model: str, layer_num: int) -> dict[str, Path]:
     """Create directories for storing results, figures, and artifacts.
     Experiments are created based on their X, y, and prob model.
@@ -125,9 +130,9 @@ def get_exp_dirs(out_root: str | Path, target: str , prob_model: str, layer_num:
     exp_root = exp_root / target / prob_model / str(layer_num)
     dirs = {
         "root": exp_root,
-        "figures": exp_root / "figures",
-        "artifacts": exp_root / "artifacts",
-        "reports": exp_root / "reports",
+        EXP_DIR_FIGURES: exp_root / EXP_DIR_FIGURES,
+        EXP_DIR_ARTIFACTS: exp_root / EXP_DIR_ARTIFACTS,
+        EXP_DIR_REPORTS: exp_root / EXP_DIR_REPORTS,
     }
     for p in dirs.values():
         p.mkdir(parents=True, exist_ok=True)
