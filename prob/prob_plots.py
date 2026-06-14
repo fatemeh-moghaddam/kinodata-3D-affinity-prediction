@@ -124,6 +124,116 @@ def plot_residuals(
     plt.close(fig)
 
 
+def plot_conditions_box(
+    conditions_dict: dict,
+    *,
+    metric: str = "squared_error",
+    baseline_dict: Optional[dict] = None,
+    title: Optional[str] = None,
+    save_path: Optional[Path] = None,
+    show: bool = True,
+) -> None:
+    """
+    Box plot of per-sample metrics across conditions.
+    
+    Args:
+        conditions_dict: Dict mapping condition name -> (y_true, y_pred)
+        metric: "squared_error" or "abs_residual"
+        baseline_dict: Optional dict of baseline conditions to include
+        title: Plot title
+        save_path: Where to save figure
+        show: Whether to display
+    
+    Example:
+        conditions = {
+            "layer_1": (y_true, y_pred_1),
+            "layer_2": (y_true, y_pred_2),
+            "layer_3": (y_true, y_pred_3),
+        }
+        baseline = {
+            "shuffled": (y_true, y_pred_shuffled),
+        }
+        plot_conditions_box(conditions, baseline_dict=baseline, metric="squared_error")
+    """
+    # Determine metric function
+    if metric.lower() in {"squared_error", "sq_error", "squared"}:
+        metric_fn = lambda y_true, y_pred: np.square(y_pred - y_true)
+        metric_label = "Squared Error"
+    elif metric.lower() in {"abs_residual", "absolute_residual", "abs_error"}:
+        metric_fn = lambda y_true, y_pred: np.abs(y_pred - y_true)
+        metric_label = "Absolute Residual"
+    else:
+        raise ValueError("metric must be 'squared_error' or 'abs_residual'")
+    
+    # Collect all data
+    rows = []
+    
+    # Process main conditions
+    for cond_name, (y_true, y_pred) in conditions_dict.items():
+        y_true = np.asarray(y_true)
+        y_pred = np.asarray(y_pred)
+        values = metric_fn(y_true, y_pred)
+        
+        for val in values:
+            rows.append({
+                "condition": cond_name,
+                "type": "real",
+                "metric": float(val)
+            })
+    
+    # Process baseline conditions if provided
+    if baseline_dict is not None:
+        for base_name, (y_true, y_pred) in baseline_dict.items():
+            y_true = np.asarray(y_true)
+            y_pred = np.asarray(y_pred)
+            values = metric_fn(y_true, y_pred)
+            
+            for val in values:
+                rows.append({
+                    "condition": base_name,
+                    "type": "baseline",
+                    "metric": float(val)
+                })
+    
+    if not rows:
+        raise ValueError("No data to plot")
+    
+    df = pd.DataFrame(rows)
+    
+    # Sort conditions alphabetically (layer_1, layer_2, layer_3)
+    condition_order = sorted(df["condition"].unique())
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=(max(8, 2 * len(condition_order)), 5.5))
+    
+    # Create box plot with hue for type (real vs baseline)
+    sns.boxplot(
+        data=df,
+        x="condition",
+        y="metric",
+        hue="type",
+        order=condition_order,
+        hue_order=["real", "baseline"] if baseline_dict else None,
+        palette={"real": "C0", "baseline": "C1"},
+        ax=ax,
+        width=0.6,
+    )
+    
+    ax.set_xlabel("Condition")
+    ax.set_ylabel(metric_label)
+    ax.set_title(title or f"{metric_label} Distribution Across Conditions")
+    ax.legend(title="Type", frameon=True)
+    fig.tight_layout()
+    
+    out_path = _resolve_save_path(save_path)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
+    
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_dist_with_log(
     df: pd.DataFrame | np.ndarray | pd.Series,
     col: str,
