@@ -65,6 +65,16 @@ def _resolve_save_path(save_path: Optional[Path | str]) -> Optional[Path]:
     return parent / name
 
 
+def _save_and_show(fig, save_path: Optional[Path | str], show: bool = True) -> None:
+    """Common pattern: save figure, optionally show, then close."""
+    out_path = _resolve_save_path(save_path)
+    if out_path is not None:
+        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
 def plot_parity(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -88,13 +98,7 @@ def plot_parity(
     g.ax_joint.set_xlim(lims)
     g.ax_joint.set_ylim(lims)
 
-    out_path = _resolve_save_path(save_path)
-    if out_path is not None:
-        g.fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    plt.close(g.fig)
+    _save_and_show(g.fig, save_path, show)
 
 
 def plot_residuals(
@@ -115,13 +119,7 @@ def plot_residuals(
     ax.set_title(title)
     fig.tight_layout()
 
-    out_path = _resolve_save_path(save_path)
-    if out_path is not None:
-        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    plt.close(fig)
+    _save_and_show(fig, save_path, show)
 
 
 def plot_conditions_box(
@@ -165,35 +163,24 @@ def plot_conditions_box(
     else:
         raise ValueError("metric must be 'squared_error' or 'abs_residual'")
     
-    # Collect all data
-    rows = []
-    
-    # Process main conditions
-    for cond_name, (y_true, y_pred) in conditions_dict.items():
-        y_true = np.asarray(y_true)
-        y_pred = np.asarray(y_pred)
-        values = metric_fn(y_true, y_pred)
-        
-        for val in values:
-            rows.append({
-                "condition": cond_name,
-                "type": "real",
-                "metric": float(val)
-            })
-    
-    # Process baseline conditions if provided
-    if baseline_dict is not None:
-        for base_name, (y_true, y_pred) in baseline_dict.items():
+    # Helper to add condition data to rows
+    def add_to_rows(cond_dict, cond_type):
+        for cond_name, (y_true, y_pred) in cond_dict.items():
             y_true = np.asarray(y_true)
             y_pred = np.asarray(y_pred)
             values = metric_fn(y_true, y_pred)
-            
             for val in values:
                 rows.append({
-                    "condition": base_name,
-                    "type": "baseline",
+                    "condition": cond_name,
+                    "type": cond_type,
                     "metric": float(val)
                 })
+    
+    # Collect all data
+    rows = []
+    add_to_rows(conditions_dict, "real")
+    if baseline_dict is not None:
+        add_to_rows(baseline_dict, "baseline")
     
     if not rows:
         raise ValueError("No data to plot")
@@ -225,13 +212,7 @@ def plot_conditions_box(
     ax.legend(title="Type", frameon=True)
     fig.tight_layout()
     
-    out_path = _resolve_save_path(save_path)
-    if out_path is not None:
-        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
-    
-    if show:
-        plt.show()
-    plt.close(fig)
+    _save_and_show(fig, save_path, show)
 
 
 def plot_dist_with_log(
@@ -306,13 +287,7 @@ def plot_dist_with_log(
 
     fig.tight_layout()
 
-    out_path = _resolve_save_path(save_path)
-    if out_path is not None:
-        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    plt.close(fig)
+    _save_and_show(fig, save_path, show)
 
 
 def scatter_affinity_vs_bonds(
@@ -367,13 +342,7 @@ def scatter_affinity_vs_bonds(
     )
     fig.tight_layout()
 
-    out_path = _resolve_save_path(save_path)
-    if out_path is not None:
-        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    plt.close(fig)
+    _save_and_show(fig, save_path, show)
 
 
 def plot_transformation_mapping(
@@ -491,10 +460,4 @@ def plot_transformation_mapping(
     fig.suptitle(title or f"Transformation mapping: {x_col} -> {y_col}", y=1.02)
     fig.tight_layout()
 
-    out_path = _resolve_save_path(save_path)
-    if out_path is not None:
-        fig.savefig(out_path, dpi=FIG_DPI, bbox_inches="tight")
-
-    if show:
-        plt.show()
-    plt.close(fig)
+    _save_and_show(fig, save_path, show)
