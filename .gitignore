@@ -17,6 +17,10 @@ condor/*.log
 condor/*.json
 condor/*.out
 condor/*.err
+prob/cluster/*.log
+prob/cluster/*.json
+prob/cluster/*.out
+prob/cluster/*.err
 
 # local config files
 *_local.yaml
