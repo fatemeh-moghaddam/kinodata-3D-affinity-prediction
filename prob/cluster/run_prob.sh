@@ -18,4 +18,4 @@ export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
 # Run from the job's working directory; assume required code is transferred with the job
-python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" --target_file "$5" --device "cuda" --run_shuffled_baseline "1" --run_non_linear_models "0" --baseline_tag "shuffled_ident"
+python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" --target_file "$5" --device "cuda" --run_shuffled_baseline "0" --run_non_linear_models "0" --baseline_tag "shuffled_ident"

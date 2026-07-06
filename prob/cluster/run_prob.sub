@@ -13,6 +13,6 @@ request_memory = 64G
 requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
 queue script, split, rmsd, gnn, target from (
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, hydrogen_bonds.pt
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, hydrophobic_interactions.pt
+   prob_orchestrate, random-k-fold, 2, CGNN-3D, affinity.pt
+   prob_orchestrate, random-k-fold, 2, CGNN-3D, docking_score.pt
 )
