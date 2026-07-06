@@ -46,7 +46,7 @@ def get_ds_load_config(**kwargs):
             split_index=None,
             dtype_out=None,  # None means no dtype conversion
             device="cpu",
-            target_file=TARGET_FILE,
+            target_file=TARGET_FILE or "",  # empty str so argparser registers it as str type
             run_shuffled_baseline=0,
             baseline_tag="shuffled_ident",
         )

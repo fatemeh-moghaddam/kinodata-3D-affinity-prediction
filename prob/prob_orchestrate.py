@@ -248,7 +248,12 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     all_runs: List[Dict[str, Any]] = []
     baseline_runs: List[Dict[str, Any]] = []
     layer_nums = [1, 2, 3]
-    target_file = prob_config.get("target_file", TARGET_FILE)
+    target_file = prob_config.get("target_file", TARGET_FILE) or None
+    if not target_file:
+        raise ValueError(
+            "target_file must be set (e.g. --target_file affinity.pt). "
+            "Check that it is passed as a CLI argument and registered in prob_config defaults as a str."
+        )
 
     def _flag(env_key: str, cfg_key: str, default: bool) -> bool:
         raw = os.getenv(env_key)
