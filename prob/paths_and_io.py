@@ -178,7 +178,7 @@ def load_y_by_ids(
         target_dir: str | Path,
         targets_file: str = None,
         ids_file: str = "ids.pt",
-        default_value: int = 0,
+        default_value: float = np.nan,
         shuffle_idents: bool = False,
         random_state: int = 96,
         ) -> np.ndarray:
@@ -187,21 +187,23 @@ def load_y_by_ids(
 
     If shuffle_idents=True, ids are permuted before lookup to create a
     random-ident baseline target assignment while preserving y distribution.
+
+    Missing idents get default_value (np.nan by default). Callers that need
+    integer targets can cast afterwards; NaN rows should be dropped before
+    passing to sklearn.
     """
     if targets_file is None:
         raise ValueError("targets_file must be provided")
     ids = load_out_tensor(in_dir, ids_file)
     full_targets = load_out_tensor(target_dir, targets_file)
-    # for easier indexing
     ids = ids.detach().cpu().numpy().astype(int)
     if shuffle_idents:
         rng = np.random.default_rng(random_state)
         ids = rng.permutation(ids)
-    y = np.array(
+    return np.array(
         [full_targets.get(int(ident), default_value) for ident in ids],
-        dtype="int64",
+        dtype=float,
     )
-    return y
 
 # ─────────────────────────────────────────────────────────────
 # Test
