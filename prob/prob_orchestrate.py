@@ -101,7 +101,7 @@ def run_probes(
                 n_splits=N_SPLITS_CV,
                 test_size=TEST_SIZE,
                 random_state=RANDOM_STATE,
-                n_jobs=n_jobs,
+                n_jobs=entry.get("n_jobs") or n_jobs,
                 exp_dirs=exp_dirs,
                 model_name=name,
                 run_stats=True,
@@ -285,6 +285,17 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     run_non_linear_models = _flag("PROB_RUN_NON_LINEAR_MODELS", "run_non_linear_models", False)
     nonlinear_models_csv = os.getenv("PROB_NONLINEAR_MODELS", "")
     nonlinear_probe_entries = _select_probes(NONLINEAR_PROBES, nonlinear_models_csv)
+
+    # The "mlp" probe is a TorchMLPRegressor; move it onto prob_config.device.
+    # On cuda, cap its GridSearchCV to n_jobs=1 -- parallel worker processes
+    # would each open their own CUDA context on the same GPU and contend for
+    # memory instead of speeding anything up.
+    device = str(prob_config.get("device", "cpu")) or "cpu"
+    for entry in nonlinear_probe_entries:
+        if entry["name"] == "mlp":
+            entry["estimator"].device = device
+            if device == "cuda":
+                entry["n_jobs"] = 1
     baseline_tag = str(
         prob_config.get(
             "baseline_tag",
