@@ -18,6 +18,6 @@ requirements = UidDomain == "cs.uni-saarland.de"
 # requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
 arguments = $(script) $(split) $(rmsd) $(gnn) $(target) $(run_linear) $(run_nonlinear) $(run_baseline) $(nonlinear_models)
 queue script, split, rmsd, gnn, target, run_linear, run_nonlinear, run_baseline, nonlinear_models from (
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, affinity.pt, 1, 1, 1, mlp
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, docking_score.pt, 1, 0, 0,
+   prob_orchestrate, random-k-fold, 2, CGNN-3D, affinity.pt, 0, 1, 0, random_forest
+   prob_orchestrate, random-k-fold, 2, CGNN-3D, docking_score.pt, 0, 1, 0, random_forest
 )
