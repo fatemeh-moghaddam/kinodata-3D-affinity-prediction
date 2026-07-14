@@ -215,6 +215,12 @@ class HybridRandomForestRegressor(BaseEstimator, RegressorMixin):
 
     def predict(self, X: np.ndarray) -> np.ndarray:
         X = np.asarray(X, dtype=np.float32)
+        if self.device == "cuda":
+            # Tree building (the expensive part) already ran on GPU in fit();
+            # X here is a host (numpy) array, so predicting on the still-cuda
+            # booster would otherwise hit xgboost's slow mismatched-device
+            # DMatrix fallback. Switch the trained booster to cpu for inference.
+            self.backend_.set_params(device="cpu")
         return np.asarray(self.backend_.predict(X)).reshape(-1)
 
 
