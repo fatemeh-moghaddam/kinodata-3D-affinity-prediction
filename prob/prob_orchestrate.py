@@ -204,6 +204,24 @@ def linear_models_shuffled_ident_baseline(
     )
 
 
+def _select_probes(
+    probe_entries: List[Dict[str, Any]], names_csv: str
+) -> List[Dict[str, Any]]:
+    """Filter probe_entries by a comma-separated list of names (e.g. "mlp,random_forest").
+
+    Empty/unset names_csv means "run all". Raises if the filter matches nothing, so a
+    typo'd name fails loudly instead of silently running zero probes.
+    """
+    names = {name.strip() for name in names_csv.split(",") if name.strip()}
+    if not names:
+        return probe_entries
+    filtered = [entry for entry in probe_entries if entry["name"] in names]
+    if not filtered:
+        available = [entry["name"] for entry in probe_entries]
+        raise ValueError(f"No probes matched {sorted(names)}; available: {available}")
+    return filtered
+
+
 def non_linear_models(
     prob_config: cfg.Config,
     X: np.ndarray,
@@ -212,19 +230,22 @@ def non_linear_models(
     n_jobs: int = -1,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
+    target_name_override: Optional[str] = None,
+    probe_entries: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    """Run all registered non-linear probes. Use NONLINEAR_PROBES in prob_models to add more."""
+    """Run registered non-linear probes (all of NONLINEAR_PROBES, or probe_entries if given)."""
     if n_jobs == -1:
         n_jobs = _cpu_budget()
     return run_probes(
         prob_config,
         X,
         y,
-        NONLINEAR_PROBES,
+        probe_entries if probe_entries is not None else NONLINEAR_PROBES,
         n_jobs,
         layer_num=layer_num,
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
+        target_name_override=target_name_override,
     )
 
 
@@ -238,13 +259,6 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     Load targets and layer representations, run linear (and optionally non-linear)
     probes per layer, write per-model artifacts and a single summary CSV.
     """
-    if use_wandb:
-        wandb.init(
-            project="probing",
-            name=f"experiment_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-            config={**prob_config, "random_state": RANDOM_STATE},
-        )
-
     all_runs: List[Dict[str, Any]] = []
     baseline_runs: List[Dict[str, Any]] = []
     layer_nums = [1, 2, 3]
@@ -267,7 +281,10 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
         Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
     )
     run_shuffled_baseline = _flag("PROB_RUN_SHUFFLED_BASELINE", "run_shuffled_baseline", True)
+    run_linear_models = _flag("PROB_RUN_LINEAR_MODELS", "run_linear_models", True)
     run_non_linear_models = _flag("PROB_RUN_NON_LINEAR_MODELS", "run_non_linear_models", False)
+    nonlinear_models_csv = os.getenv("PROB_NONLINEAR_MODELS", "")
+    nonlinear_probe_entries = _select_probes(NONLINEAR_PROBES, nonlinear_models_csv)
     baseline_tag = str(
         prob_config.get(
             "baseline_tag",
@@ -277,6 +294,22 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
 
     sub_file = _ROOT / "prob" / "cluster" / "run_prob.sub"
     n_jobs = _cpu_budget(sub_file=sub_file)
+
+    if use_wandb:
+        target_name_for_run = Path(target_file).stem
+        tags = [target_name_for_run, str(prob_config.get("gnn_model_type", ""))]
+        if run_linear_models:
+            tags += [entry["name"] for entry in LINEAR_PROBES]
+        if run_non_linear_models:
+            tags += [entry["name"] for entry in nonlinear_probe_entries]
+        if run_shuffled_baseline:
+            tags.append(baseline_tag)
+        wandb.init(
+            project="probing",
+            name=f"{target_name_for_run}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            tags=[tag for tag in tags if tag],
+            config={**prob_config, "random_state": RANDOM_STATE},
+        )
 
     y = load_y_by_ids(
         prob_config.output_dir,
@@ -298,17 +331,18 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     for layer in layer_nums:
         X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
 
-        all_runs.extend(
-            linear_models(
-                prob_config,
-                X,
-                y,
-                layer_num=layer,
-                n_jobs=n_jobs,
-                reuse_best_params=reuse_best_params,
-                best_params_cache_dir=best_params_cache_dir,
+        if run_linear_models:
+            all_runs.extend(
+                linear_models(
+                    prob_config,
+                    X,
+                    y,
+                    layer_num=layer,
+                    n_jobs=n_jobs,
+                    reuse_best_params=reuse_best_params,
+                    best_params_cache_dir=best_params_cache_dir,
+                )
             )
-        )
         if run_non_linear_models:
             all_runs.extend(
                 non_linear_models(
@@ -319,22 +353,38 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
                     best_params_cache_dir=best_params_cache_dir,
+                    probe_entries=nonlinear_probe_entries,
                 )
             )
 
         if run_shuffled_baseline:
-            baseline_runs.extend(
-                linear_models(
-                    prob_config,
-                    X,
-                    y_shuffled,
-                    layer_num=layer,
-                    n_jobs=n_jobs,
-                    reuse_best_params=reuse_best_params,
-                    best_params_cache_dir=best_params_cache_dir,
-                    target_name_override=baseline_target_name,
+            if run_linear_models:
+                baseline_runs.extend(
+                    linear_models(
+                        prob_config,
+                        X,
+                        y_shuffled,
+                        layer_num=layer,
+                        n_jobs=n_jobs,
+                        reuse_best_params=reuse_best_params,
+                        best_params_cache_dir=best_params_cache_dir,
+                        target_name_override=baseline_target_name,
+                    )
                 )
-            )
+            if run_non_linear_models:
+                baseline_runs.extend(
+                    non_linear_models(
+                        prob_config,
+                        X,
+                        y_shuffled,
+                        layer_num=layer,
+                        n_jobs=n_jobs,
+                        reuse_best_params=reuse_best_params,
+                        best_params_cache_dir=best_params_cache_dir,
+                        probe_entries=nonlinear_probe_entries,
+                        target_name_override=baseline_target_name,
+                    )
+                )
 
     # Single summary CSV after all layers
     summary_df = pd.DataFrame(all_runs)

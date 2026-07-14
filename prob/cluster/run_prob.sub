@@ -1,7 +1,6 @@
 universe = docker
 docker_image = gjoschka/kinodata3d-b0:2.3.0-cuda12.1
 executable = run_prob.sh
-arguments = $(script) $(split) $(rmsd) $(gnn) $(target)
 output = run_prob.$(ClusterId).$(ProcId).out
 error = run_prob.$(ClusterId).$(ProcId).err
 log = run_prob.$(ClusterId).log
@@ -12,7 +11,13 @@ request_CPUs = 64
 request_memory = 64G
 requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
-queue script, split, rmsd, gnn, target from (
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, affinity.pt
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, docking_score.pt
+
+# run_linear/run_nonlinear/run_baseline/nonlinear_models are forwarded by run_prob.sh as
+# PROB_RUN_LINEAR_MODELS / PROB_RUN_NON_LINEAR_MODELS / PROB_RUN_SHUFFLED_BASELINE /
+# PROB_NONLINEAR_MODELS env vars for prob_orchestrate.main() -- one job runs everything
+# requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
+arguments = $(script) $(split) $(rmsd) $(gnn) $(target) $(run_linear) $(run_nonlinear) $(run_baseline) $(nonlinear_models)
+queue script, split, rmsd, gnn, target, run_linear, run_nonlinear, run_baseline, nonlinear_models from (
+   prob_orchestrate, random-k-fold, 2, CGNN-3D, affinity.pt, 1, 1, 1, mlp
+   prob_orchestrate, random-k-fold, 2, CGNN-3D, docking_score.pt, 1, 0, 0,
 )
