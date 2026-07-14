@@ -150,18 +150,22 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
         return pred.reshape(-1)
 
 
-# cuML RF requires an explicit max_depth (no "grow until pure" option like
-# sklearn's max_depth=None), so on GPU this is the fallback -- the deepest
-# value already tested elsewhere in this probe's max_depth grid.
-_CUML_MAX_DEPTH_FOR_UNLIMITED = 20
+# XGBoost's GPU "random forest mode" requires an explicit max_depth (no "grow
+# until pure" option like sklearn's max_depth=None), so on GPU this is the
+# fallback -- the deepest value already tested elsewhere in this probe's grid.
+_GPU_MAX_DEPTH_FOR_UNLIMITED = 20
 
 
 class HybridRandomForestRegressor(BaseEstimator, RegressorMixin):
-    """RandomForestRegressor that fits on cuML (GPU) or sklearn (CPU) based on `device`.
+    """RandomForestRegressor that fits on GPU (via xgboost) or CPU (via sklearn)
+    based on `device`.
 
     Exposes the same n_estimators/max_depth/min_samples_leaf/random_state API
     regardless of backend, so it plugs into the existing Pipeline/GridSearchCV
-    probing code and param_grid unchanged.
+    probing code and param_grid unchanged. The GPU backend is xgboost's
+    "random forest" mode (a single boosting round of num_parallel_tree bagged
+    trees, each on a row/column subsample) rather than sklearn's bagging
+    algorithm -- close in spirit, not a bit-for-bit equivalent.
     """
 
     def __init__(
@@ -180,13 +184,18 @@ class HybridRandomForestRegressor(BaseEstimator, RegressorMixin):
 
     def _build_backend(self):
         if self.device == "cuda":
-            from cuml.ensemble import RandomForestRegressor as CumlRandomForestRegressor
+            import xgboost as xgb
 
-            max_depth = self.max_depth if self.max_depth is not None else _CUML_MAX_DEPTH_FOR_UNLIMITED
-            return CumlRandomForestRegressor(
-                n_estimators=self.n_estimators,
+            max_depth = self.max_depth if self.max_depth is not None else _GPU_MAX_DEPTH_FOR_UNLIMITED
+            return xgb.XGBRegressor(
+                n_estimators=1,
+                num_parallel_tree=self.n_estimators,
                 max_depth=max_depth,
-                min_samples_leaf=self.min_samples_leaf,
+                min_child_weight=self.min_samples_leaf,
+                subsample=0.8,
+                colsample_bynode=0.8,
+                tree_method="hist",
+                device="cuda",
                 random_state=self.random_state,
             )
         return RandomForestRegressor(
