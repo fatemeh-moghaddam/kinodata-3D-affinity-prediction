@@ -29,9 +29,14 @@ export PROB_NONLINEAR_MODELS="${9:-}"
 # The "random_forest" probe runs on cuML (GPU) when --device is cuda (see below).
 # cuML wheels are multi-GB, so only install them when this job will actually run
 # random_forest, i.e. non-linear models are on and the (comma-separated, empty
-# = all) selection includes it.
-if [ "${PROB_RUN_NON_LINEAR_MODELS}" = "1" ] && { [ -z "${PROB_NONLINEAR_MODELS}" ] || [[ ",${PROB_NONLINEAR_MODELS}," == *",random_forest,"* ]]; }; then
-    pip install --extra-index-url=https://pypi.nvidia.com cuml-cu12
+# = all) selection includes it. Plain POSIX `case`, not `[[ ]]` -- this script
+# runs under /bin/sh (dash on this cluster), which doesn't support bash's `[[`.
+if [ "${PROB_RUN_NON_LINEAR_MODELS}" = "1" ]; then
+    case ",${PROB_NONLINEAR_MODELS}," in
+        ",,"|*,random_forest,*)
+            pip install --extra-index-url=https://pypi.nvidia.com cuml-cu12
+            ;;
+    esac
 fi
 
 # Run from the job's working directory; assume required code is transferred with the job
