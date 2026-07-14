@@ -150,6 +150,65 @@ class TorchMLPRegressor(BaseEstimator, RegressorMixin):
         return pred.reshape(-1)
 
 
+# cuML RF requires an explicit max_depth (no "grow until pure" option like
+# sklearn's max_depth=None), so on GPU this is the fallback -- the deepest
+# value already tested elsewhere in this probe's max_depth grid.
+_CUML_MAX_DEPTH_FOR_UNLIMITED = 20
+
+
+class HybridRandomForestRegressor(BaseEstimator, RegressorMixin):
+    """RandomForestRegressor that fits on cuML (GPU) or sklearn (CPU) based on `device`.
+
+    Exposes the same n_estimators/max_depth/min_samples_leaf/random_state API
+    regardless of backend, so it plugs into the existing Pipeline/GridSearchCV
+    probing code and param_grid unchanged.
+    """
+
+    def __init__(
+        self,
+        n_estimators: int = 100,
+        max_depth: Optional[int] = None,
+        min_samples_leaf: int = 1,
+        random_state: Optional[int] = None,
+        device: str = "cpu",
+    ):
+        self.n_estimators = n_estimators
+        self.max_depth = max_depth
+        self.min_samples_leaf = min_samples_leaf
+        self.random_state = random_state
+        self.device = device
+
+    def _build_backend(self):
+        if self.device == "cuda":
+            from cuml.ensemble import RandomForestRegressor as CumlRandomForestRegressor
+
+            max_depth = self.max_depth if self.max_depth is not None else _CUML_MAX_DEPTH_FOR_UNLIMITED
+            return CumlRandomForestRegressor(
+                n_estimators=self.n_estimators,
+                max_depth=max_depth,
+                min_samples_leaf=self.min_samples_leaf,
+                random_state=self.random_state,
+            )
+        return RandomForestRegressor(
+            n_estimators=self.n_estimators,
+            max_depth=self.max_depth,
+            min_samples_leaf=self.min_samples_leaf,
+            random_state=self.random_state,
+            n_jobs=1,
+        )
+
+    def fit(self, X: np.ndarray, y: np.ndarray) -> "HybridRandomForestRegressor":
+        X = np.asarray(X, dtype=np.float32)
+        y = np.asarray(y, dtype=np.float32)
+        self.backend_ = self._build_backend()
+        self.backend_.fit(X, y)
+        return self
+
+    def predict(self, X: np.ndarray) -> np.ndarray:
+        X = np.asarray(X, dtype=np.float32)
+        return np.asarray(self.backend_.predict(X)).reshape(-1)
+
+
 def _ridge():
     return Ridge(random_state=RANDOM_STATE)
 
@@ -158,8 +217,8 @@ def _lasso():
     return Lasso(random_state=RANDOM_STATE, max_iter=10000)
 
 
-def _rf():
-    return RandomForestRegressor(random_state=RANDOM_STATE, n_jobs=1)
+def _rf(device: str = "cpu"):
+    return HybridRandomForestRegressor(random_state=RANDOM_STATE, device=device)
 
 
 def _mlp(device: str = "cpu"):
@@ -185,7 +244,7 @@ LINEAR_PROBES: List[Dict[str, Any]] = [
     },
 ]
 
-# Non-linear probes: add more by appending. The "mlp" estimator defaults to
+# Non-linear probes: add more by appending. Both estimators default to
 # device="cpu"; prob_orchestrate.py overrides entry["estimator"].device (and
 # caps entry["n_jobs"] to 1) when the job is configured to run on cuda, since
 # many parallel GridSearchCV workers would otherwise contend for the same GPU.

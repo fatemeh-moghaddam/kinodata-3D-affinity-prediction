@@ -26,5 +26,13 @@ export PROB_RUN_NON_LINEAR_MODELS="${7:-0}"
 export PROB_RUN_SHUFFLED_BASELINE="${8:-0}"
 export PROB_NONLINEAR_MODELS="${9:-}"
 
+# The "random_forest" probe runs on cuML (GPU) when --device is cuda (see below).
+# cuML wheels are multi-GB, so only install them when this job will actually run
+# random_forest, i.e. non-linear models are on and the (comma-separated, empty
+# = all) selection includes it.
+if [ "${PROB_RUN_NON_LINEAR_MODELS}" = "1" ] && { [ -z "${PROB_NONLINEAR_MODELS}" ] || [[ ",${PROB_NONLINEAR_MODELS}," == *",random_forest,"* ]]; }; then
+    pip install --extra-index-url=https://pypi.nvidia.com cuml-cu12
+fi
+
 # Run from the job's working directory; assume required code is transferred with the job
 python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" --target_file "$5" --device "cuda" --baseline_tag "shuffled_ident"

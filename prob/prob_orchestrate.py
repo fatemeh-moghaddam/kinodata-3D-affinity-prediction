@@ -286,13 +286,14 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     nonlinear_models_csv = os.getenv("PROB_NONLINEAR_MODELS", "")
     nonlinear_probe_entries = _select_probes(NONLINEAR_PROBES, nonlinear_models_csv)
 
-    # The "mlp" probe is a TorchMLPRegressor; move it onto prob_config.device.
-    # On cuda, cap its GridSearchCV to n_jobs=1 -- parallel worker processes
-    # would each open their own CUDA context on the same GPU and contend for
-    # memory instead of speeding anything up.
+    # Non-linear probe estimators (TorchMLPRegressor, HybridRandomForestRegressor)
+    # expose a `.device` attribute; move them onto prob_config.device. On cuda,
+    # cap each one's GridSearchCV to n_jobs=1 -- parallel worker processes would
+    # each open their own CUDA context on the same GPU and contend for memory
+    # instead of speeding anything up.
     device = str(prob_config.get("device", "cpu")) or "cpu"
     for entry in nonlinear_probe_entries:
-        if entry["name"] == "mlp":
+        if hasattr(entry["estimator"], "device"):
             entry["estimator"].device = device
             if device == "cuda":
                 entry["n_jobs"] = 1
