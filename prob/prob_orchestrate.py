@@ -323,21 +323,25 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             config={**prob_config, "random_state": RANDOM_STATE},
         )
 
-    y = load_y_by_ids(
+    # valid_mask marks non-NaN targets; index X and y by it together (never y
+    # alone) to drop invalid rows without desyncing the two.
+    y, valid_mask = load_y_by_ids(
         prob_config.output_dir,
         target_dir=prob_config.target_dir,
         targets_file=target_file,
+        return_mask=True,
     )
     target_name = Path(target_file).stem
     baseline_target_name = f"{target_name}_{baseline_tag}"
 
     if run_shuffled_baseline:
-        y_shuffled = load_y_by_ids(
+        y_shuffled, valid_mask_shuffled = load_y_by_ids(
             prob_config.output_dir,
             target_dir=prob_config.target_dir,
             targets_file=target_file,
             shuffle_idents=True,
             random_state=RANDOM_STATE,
+            return_mask=True,
         )
 
     for layer in layer_nums:
@@ -347,8 +351,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             all_runs.extend(
                 linear_models(
                     prob_config,
-                    X,
-                    y,
+                    X[valid_mask],
+                    y[valid_mask],
                     layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
@@ -359,8 +363,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             all_runs.extend(
                 non_linear_models(
                     prob_config,
-                    X,
-                    y,
+                    X[valid_mask],
+                    y[valid_mask],
                     layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
@@ -374,8 +378,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                 baseline_runs.extend(
                     linear_models(
                         prob_config,
-                        X,
-                        y_shuffled,
+                        X[valid_mask_shuffled],
+                        y_shuffled[valid_mask_shuffled],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
@@ -387,8 +391,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                 baseline_runs.extend(
                     non_linear_models(
                         prob_config,
-                        X,
-                        y_shuffled,
+                        X[valid_mask_shuffled],
+                        y_shuffled[valid_mask_shuffled],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,

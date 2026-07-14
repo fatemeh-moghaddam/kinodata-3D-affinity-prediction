@@ -181,16 +181,25 @@ def load_y_by_ids(
         default_value: float = np.nan,
         shuffle_idents: bool = False,
         random_state: int = 96,
-        ) -> np.ndarray:
+        return_mask: bool = False,
+        ) -> np.ndarray | tuple[np.ndarray, np.ndarray]:
     """
     Load target values corresponding to ids from a targets .pt file.
 
     If shuffle_idents=True, ids are permuted before lookup to create a
     random-ident baseline target assignment while preserving y distribution.
 
-    Missing idents get default_value (np.nan by default). Callers that need
-    integer targets can cast afterwards; NaN rows should be dropped before
-    passing to sklearn.
+    Missing idents (and, for source data like docking_score that encodes a
+    failed/missing value as a huge sentinel rather than NaN, any target this
+    was already cleaned to NaN at generation time) get default_value (np.nan
+    by default). Callers that need integer targets can cast afterwards.
+
+    If return_mask=True, also returns a boolean `valid_mask` of the same
+    length and row order as this y (and therefore as the X loaded for the
+    same ids/split, since load_X_from_pt preserves ids.pt's row order and
+    shuffle_idents only permutes values, not length/position). Index both
+    X and y with this same mask to drop NaN rows without desynchronizing
+    them -- do not drop from y alone, or the two will no longer line up.
     """
     if targets_file is None:
         raise ValueError("targets_file must be provided")
@@ -200,10 +209,13 @@ def load_y_by_ids(
     if shuffle_idents:
         rng = np.random.default_rng(random_state)
         ids = rng.permutation(ids)
-    return np.array(
+    y = np.array(
         [full_targets.get(int(ident), default_value) for ident in ids],
         dtype=float,
     )
+    if return_mask:
+        return y, ~np.isnan(y)
+    return y
 
 # ─────────────────────────────────────────────────────────────
 # Test
