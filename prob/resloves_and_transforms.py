@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import colorama
 
+import pandas as pd
 import torch
 
 from kinodata.model.complex_transformer import RegressionModel
@@ -120,6 +121,41 @@ def aggregate_ids(config: cfg.Config) -> None:
     aggregated_path = output_dir / "ids.pt"
     torch.save(aggregated_ids, aggregated_path)
     print(f"Aggregated ids saved to {aggregated_path}")
+
+    return
+
+
+def aggregate_predictions(config: cfg.Config) -> None:
+    """
+    Aggregate preds_<fold>.pt / y_true_<fold>.pt across all folds (written by
+    run_fold when save_predictions=True) and save as a single
+    config.output_dir/predictions.csv with columns y_true, y_pred.
+    """
+    output_dir = config.output_dir
+    k_fold = config.get('k_fold', 5)
+
+    pred_tensors: List[torch.Tensor] = []
+    y_true_tensors: List[torch.Tensor] = []
+    for fold in range(k_fold):
+        fold_dir = output_dir / str(fold)
+        preds_path = fold_dir / f"preds_{fold}.pt"
+        y_true_path = fold_dir / f"y_true_{fold}.pt"
+        if preds_path.exists() and y_true_path.exists():
+            pred_tensors.append(torch.load(preds_path))
+            y_true_tensors.append(torch.load(y_true_path))
+        else:
+            print(f"Warning: {preds_path} or {y_true_path} does not exist.")
+
+    if not pred_tensors:
+        print(colorama.Fore.RED + "No predictions found for aggregation." + colorama.Style.RESET_ALL)
+        return
+
+    y_pred = torch.cat(pred_tensors, dim=0).numpy()
+    y_true = torch.cat(y_true_tensors, dim=0).numpy()
+
+    aggregated_path = output_dir / "predictions.csv"
+    pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).to_csv(aggregated_path, index=False)
+    print(f"Aggregated predictions saved to {aggregated_path}")
 
     return
 

@@ -24,7 +24,12 @@ from prob.paths_and_io import (
     get_out_dir,
     get_split_file,
 )
-from prob.resloves_and_transforms import aggregate_folds, aggregate_ids, load_config
+from prob.resloves_and_transforms import (
+    aggregate_folds,
+    aggregate_ids,
+    aggregate_predictions,
+    load_config,
+)
 
 """
 Generate probing dataset representations for a trained GNN across CV folds.
@@ -49,6 +54,8 @@ class ProbingJobSpec:
     k_fold: int = 5
     seed: int = 96
     wandb_mode: str = "disabled"
+    save_representations: bool = True
+    save_predictions: bool = False
 
 
 @dataclass(frozen=True)
@@ -223,6 +230,8 @@ if __name__ == "__main__":
     parser.add_argument("--seed", default=96, type=int)
     parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--dtype_out", default=None, type=str)
+    parser.add_argument("--save_representations", default=1, type=int, choices=[0, 1])
+    parser.add_argument("--save_predictions", default=0, type=int, choices=[0, 1])
     args = parser.parse_args()
 
     spec = ProbingJobSpec(
@@ -234,6 +243,8 @@ if __name__ == "__main__":
         dtype_out=args.dtype_out,
         k_fold=args.k_fold,
         seed=args.seed,
+        save_representations=bool(args.save_representations),
+        save_predictions=bool(args.save_predictions),
     )
     _validate_spec(spec)
 
@@ -280,7 +291,13 @@ if __name__ == "__main__":
         if len(ds) == 0:
             raise ValueError("Probing dataset is empty")
 
-        run_fold(ds, gnn_model, prob_config)
+        run_fold(
+            ds,
+            gnn_model,
+            prob_config,
+            save_representations=spec.save_representations,
+            save_predictions=spec.save_predictions,
+        )
 
         fold_paths = resolve_paths(spec, fold)
         manifest_payload["folds"][str(fold)] = {
@@ -293,15 +310,24 @@ if __name__ == "__main__":
 
     agg_cfg = cfg.Config({"output_dir": output_root_dir, "k_fold": spec.k_fold})
     num_layers = int(prob_config.get("num_attention_blocks", 3))
-    for i in range(num_layers):
-        aggregate_folds(agg_cfg, f"layer_{i+1}")
-    aggregate_ids(agg_cfg)
+    layer_names = [f"layer_{i+1}" for i in range(num_layers)]
 
-    manifest_payload["artifacts"].update(
-        {
-            "aggregated_ids": str(output_root_dir / "ids.pt"),
-            "aggregated_layers": [str(output_root_dir / f"{layer_name}.pt") for layer_name in layer_names],
-        }
-    )
+    if spec.save_representations:
+        for layer_name in layer_names:
+            aggregate_folds(agg_cfg, layer_name)
+        aggregate_ids(agg_cfg)
+        manifest_payload["artifacts"].update(
+            {
+                "aggregated_ids": str(output_root_dir / "ids.pt"),
+                "aggregated_layers": [str(output_root_dir / f"{layer_name}.pt") for layer_name in layer_names],
+            }
+        )
+
+    if spec.save_predictions:
+        aggregate_predictions(agg_cfg)
+        manifest_payload["artifacts"].update(
+            {"predictions": str(output_root_dir / "predictions.csv")}
+        )
+
     write_manifest(output_root_dir, manifest_payload)
 

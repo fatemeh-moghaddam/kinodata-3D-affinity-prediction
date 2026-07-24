@@ -119,16 +119,21 @@ def _compute_fold_representations(
     gnn_model: RegressionModel,
     config: Config,
     device: torch.device,
-) -> tuple[Dict[str, torch.Tensor], torch.Tensor]:
+) -> tuple[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Run model in eval mode over the dataset and collect per-layer graph representations
-    and sample IDs. Returns (layer_name -> tensor of shape [N, d], ids_tensor of shape [N]).
+    Run model in eval mode over the dataset and collect per-layer graph representations,
+    sample IDs, and the model's predictions/targets (the latter two are cheap byproducts
+    of the same forward pass, so they're always collected; callers decide whether to
+    persist them). Returns (layer_name -> tensor of shape [N, d], ids_tensor of shape [N],
+    preds_tensor of shape [N], y_true_tensor of shape [N]).
     """
     if not config.graph_level:
         raise NotImplementedError("Only graph-level probing is implemented.")
 
     layer_bufs: Dict[str, List[torch.Tensor]] = {}
     idents: List[int] = []
+    preds: List[torch.Tensor] = []
+    y_true: List[torch.Tensor] = []
     dtype_out = dtype_resolve(config.dtype_out)
 
     gnn_model.eval().to(device)
@@ -138,7 +143,9 @@ def _compute_fold_representations(
         for batch in tqdm(loader, desc="Computing graph representations"):
             idents.extend(batch.ident.tolist())
             batch = batch.to(device)
-            _, intermediate_node_reprs, _, _ = gnn_model(batch)
+            pred, intermediate_node_reprs, _, _ = gnn_model(batch)
+            preds.append(pred.detach().flatten().cpu())
+            y_true.append(batch.y.detach().flatten().cpu())
 
             for layer_name, (node_repr, batch_index) in intermediate_node_reprs.items():
                 graph_repr = gnn_model.aggr(node_repr, batch_index).detach().cpu()
@@ -148,17 +155,26 @@ def _compute_fold_representations(
 
     layers_cat = {k: torch.cat(v, dim=0) for k, v in layer_bufs.items()}
     ids_tensor = torch.tensor(idents, dtype=torch.long)
-    return layers_cat, ids_tensor
+    preds_tensor = torch.cat(preds, dim=0)
+    y_true_tensor = torch.cat(y_true, dim=0)
+    return layers_cat, ids_tensor, preds_tensor, y_true_tensor
 
 
 def _validate_fold_shapes(
     fold_size: int,
     layers_cat: Dict[str, torch.Tensor],
     ids_tensor: torch.Tensor,
+    preds_tensor: torch.Tensor,
+    y_true_tensor: torch.Tensor,
 ) -> None:
     if ids_tensor.shape[0] != fold_size:
         raise RuntimeError(
             f"IDs tensor size {ids_tensor.shape[0]} does not match fold size {fold_size}"
+        )
+    if preds_tensor.shape[0] != fold_size or y_true_tensor.shape[0] != fold_size:
+        raise RuntimeError(
+            f"Predictions/targets size {preds_tensor.shape[0]}/{y_true_tensor.shape[0]} "
+            f"does not match fold size {fold_size}"
         )
     for layer_name, t in layers_cat.items():
         if t.shape[0] != fold_size:
@@ -178,20 +194,43 @@ def _write_fold_artifacts(
     save_out_tensor(ids_tensor, fold_dir, f"ids_{config.split_index}.pt")
 
 
+def _write_fold_predictions(
+    config: Config,
+    preds_tensor: torch.Tensor,
+    y_true_tensor: torch.Tensor,
+) -> None:
+    fold_dir = Path(config.output_dir) / str(config.split_index)
+    save_out_tensor(preds_tensor, fold_dir, f"preds_{config.split_index}.pt")
+    save_out_tensor(y_true_tensor, fold_dir, f"y_true_{config.split_index}.pt")
+
+
 def run_fold(
     ds: KinodataDocked,
     gnn_model: RegressionModel,
     config: Config,
+    save_representations: bool = True,
+    save_predictions: bool = False,
 ) -> None:
     """
-    Run one fold: compute per-layer graph representations for `ds`, validate shapes,
-    and write layer tensors and IDs under config.output_dir / config.split_index.
+    Run one fold: compute per-layer graph representations, IDs, and predictions/targets
+    for `ds` in a single forward pass, then write out whichever artifacts are requested.
+
+    - save_representations (default True, matches prior behavior): write layer tensors
+      and ids_<fold>.pt to config.output_dir / config.split_index.
+    - save_predictions (default False): write preds_<fold>.pt and y_true_<fold>.pt to
+      the same fold directory. These are new, separate files -- enabling this never
+      touches the layer/ids artifacts, and disabling save_representations lets you
+      collect predictions only, without rewriting the (possibly already computed)
+      representation artifacts.
     """
     fold_size = len(ds)
     device = _resolve_device(config)
 
-    layers_cat, ids_tensor = _compute_fold_representations(
+    layers_cat, ids_tensor, preds_tensor, y_true_tensor = _compute_fold_representations(
         ds, gnn_model, config, device
     )
-    _validate_fold_shapes(fold_size, layers_cat, ids_tensor)
-    _write_fold_artifacts(config, layers_cat, ids_tensor)
+    _validate_fold_shapes(fold_size, layers_cat, ids_tensor, preds_tensor, y_true_tensor)
+    if save_representations:
+        _write_fold_artifacts(config, layers_cat, ids_tensor)
+    if save_predictions:
+        _write_fold_predictions(config, preds_tensor, y_true_tensor)
