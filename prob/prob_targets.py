@@ -56,6 +56,9 @@ def caculate_save_nitrogen_counts(dataset: List[HeteroData],
     save_out_tensor(nitrogen_atoms, output_dir=output_dir, filename="nitrogen_counts.pt")
 
 
+
+
+
 if __name__ == "__main__":
     dataset = KinodataDocked(transform=TransformToComplexGraph(remove_heterogeneous_representation=False), use_multiprocessing=True, num_processes= 16)
     caculate_save_nitrogen_counts(dataset)

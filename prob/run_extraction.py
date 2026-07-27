@@ -122,6 +122,23 @@ def resolve_device(requested: str | None) -> str:
     return requested
 
 
+def expected_fold_artifacts(prob_config: cfg.Config, spec: ProbingJobSpec) -> list[Path]:
+    """
+    Files `run_fold` will write for this fold, given what the spec asks to save.
+    Used to decide whether a fold is already done and can be skipped on a re-run.
+    """
+    fold = int(prob_config.split_index)
+    fold_dir = Path(prob_config.output_dir) / str(fold)
+    paths: list[Path] = []
+    if spec.save_representations:
+        num_layers = int(prob_config.get("num_attention_blocks", 3))
+        paths += [fold_dir / f"layer_{i+1}_{fold}.pt" for i in range(num_layers)]
+        paths.append(fold_dir / f"ids_{fold}.pt")
+    if spec.save_predictions:
+        paths += [fold_dir / f"preds_{fold}.pt", fold_dir / f"y_true_{fold}.pt"]
+    return paths
+
+
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
     try:
@@ -251,6 +268,13 @@ if __name__ == "__main__":
     parser.add_argument("--dtype_out", default=None, type=str)
     parser.add_argument("--save_representations", default=1, type=int, choices=[0, 1])
     parser.add_argument("--save_predictions", default=0, type=int, choices=[0, 1])
+    parser.add_argument(
+        "--overwrite",
+        default=0,
+        type=int,
+        choices=[0, 1],
+        help="recompute folds whose artifacts already exist (default: skip them)",
+    )
     args = parser.parse_args()
 
     device = resolve_device(args.device)
@@ -312,6 +336,27 @@ if __name__ == "__main__":
         logger.info("Split file: %s", prob_config.split_file)
         logger.info("Checkpoint: %s", prob_config.model_ckpt)
         logger.info("Output root: %s", prob_config.output_dir)
+
+        # Resume support: skip folds already on disk. Checked before build_kd_ds so a
+        # skipped fold never pays the (large) dataset load.
+        expected = expected_fold_artifacts(prob_config, spec)
+        if not args.overwrite and expected and all(p.exists() for p in expected):
+            fold_dir = Path(prob_config.output_dir) / str(fold)
+            n_done = int(torch.load(expected[0], map_location="cpu").shape[0])
+            logger.info(
+                "Fold %s: artifacts already present (%s samples), skipping. "
+                "Pass --overwrite 1 to recompute.", fold, n_done,
+            )
+            fold_paths = resolve_paths(spec, fold)
+            manifest_payload["folds"][str(fold)] = {
+                "model_dir": str(fold_paths.model_dir),
+                "split_file": str(prob_config.split_file),
+                "model_ckpt": str(prob_config.model_ckpt),
+                "fold_output_dir": str(fold_dir),
+                "num_samples": n_done,
+                "reused": True,
+            }
+            continue
 
         gnn_model = build_gnn_model(prob_config).eval()
         if gnn_model is None:
