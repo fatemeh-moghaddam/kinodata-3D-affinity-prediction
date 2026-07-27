@@ -119,10 +119,13 @@ def _resolve_device(config: Config) -> torch.device:
 
 def _build_eval_loader(ds: KinodataDocked, config: Config, device: torch.device) -> DataLoader:
     """
-    Inference loader. Under no_grad there is no activation memory to hold, so we use a
-    larger batch than training (`infer_batch_size`, default 4x `batch_size`). Batch size
-    does not affect outputs here: the model is in eval mode and pooling is per-graph via
-    `batch_index`.
+    Inference loader. Defaults to the training `batch_size`, which is known to fit.
+
+    Do not assume no_grad allows a bigger batch here: extraction keeps every layer's
+    intermediate node representations resident on the device at once, so peak memory
+    per batch is *higher* than a plain forward pass, not lower. A 4x batch OOMs on a
+    16 GB card. Override via `infer_batch_size` only if you have headroom to spare;
+    batch size does not affect outputs (eval mode, per-graph pooling via `batch_index`).
 
     Worker count is deliberately small rather than `CPU_COUNT`. Each worker forks the
     in-memory dataset, and the prefetch buffer holds `num_workers * prefetch_factor *
@@ -130,7 +133,7 @@ def _build_eval_loader(ds: KinodataDocked, config: Config, device: torch.device)
     actually requested. A handful of workers is enough to stop the main process from
     being the bottleneck.
     """
-    batch_size = int(config.get("infer_batch_size", 0) or config.batch_size * 4)
+    batch_size = int(config.get("infer_batch_size", 0) or config.batch_size)
     on_gpu = device.type == "cuda"
     num_workers = min(int(config.get("eval_num_workers", 4) or 0), max(CPU_COUNT - 1, 0)) if on_gpu else 0
 
@@ -188,6 +191,11 @@ def _compute_fold_representations(
                 if dtype_out is not None:
                     graph_repr = graph_repr.to(dtype_out)
                 layer_bufs.setdefault(layer_name, []).append(graph_repr)
+
+            # Every layer's node representations are held on-device at once and are the
+            # bulk of the peak. Drop them now rather than at the next loop iteration,
+            # where they would still be live while the next batch is being allocated.
+            del intermediate_node_reprs, pred, batch
 
     layers_cat = {k: torch.cat(v, dim=0) for k, v in layer_bufs.items()}
     ids_tensor = torch.tensor(idents, dtype=torch.long)
