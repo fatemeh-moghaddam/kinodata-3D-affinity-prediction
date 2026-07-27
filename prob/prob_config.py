@@ -65,23 +65,33 @@ def get_ds_load_config(**kwargs):
     if "split_index" in kwargs:
         assert kwargs["split_index"] in set({0, 1, 2, 3, 4, None}), "Invalid split index"
     config_name = kwargs.get("config_name", "prob_ds_load")
-    target_file = kwargs.get("target_file", defaults["target_file"])
 
     # merge: kwargs overrides defaults
     config_args = {**defaults, **{k: v for k, v in kwargs.items() if k != "config_name"}}
-    # Initialize the config with the defaults and kwargs
-    output_dir = get_out_dir(config_args["gnn_model_type"],
-                                config_args["filter_rmsd_max_value"],
-                                config_args["split_type"],
-                                split_fold=None)
-    
-    target_dir = output_dir.parents[2] / "targets"
-
-    cfg.register(config_name, **{**config_args, "output_dir": output_dir, "target_dir": target_dir})
+    cfg.register(config_name, **config_args)
     prob_ds_config = cfg.get(config_name)
 
     # In notebooks, argparse sees Jupyter kernel args and can crash.
     # Keep CLI behavior unchanged: only parse argv outside ipykernel.
-    if "ipykernel" in sys.modules:
-        return prob_ds_config
-    return prob_ds_config.update_from_args()
+    if "ipykernel" not in sys.modules:
+        prob_ds_config = prob_ds_config.update_from_args()
+
+    # Resolve paths only AFTER the CLI overrides are applied: gnn_model_type,
+    # filter_rmsd_max_value and split_type are all part of output_dir, so
+    # resolving them from `defaults` would pin every CLI run to the *default*
+    # model's directory -- e.g. a `--gnn_model_type CGNN` job would silently
+    # read X from and write its results into data/probing/CGNN-3D/...
+    gnn_model_type = prob_ds_config["gnn_model_type"]
+    assert gnn_model_type in ["CGNN-3D", "CGNN", "DTI"], (
+        f"Invalid GNN model type: {gnn_model_type!r}"
+    )
+    output_dir = get_out_dir(
+        gnn_model_type,
+        prob_ds_config["filter_rmsd_max_value"],
+        prob_ds_config["split_type"],
+        split_fold=None,
+    )
+    # target_dir stays model-agnostic: data/probing/targets
+    return prob_ds_config.update(
+        {"output_dir": output_dir, "target_dir": output_dir.parents[2] / "targets"}
+    )

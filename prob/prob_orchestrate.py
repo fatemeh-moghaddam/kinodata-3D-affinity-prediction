@@ -94,6 +94,9 @@ def run_probes(
             prob_model=name,
             layer_num=layer,
         )
+        # One line per experiment, so the .out file shows progress and the exact
+        # directory each probe's artifacts/reports/figures are written to.
+        print(f"[prob] {name} layer={layer} -> {exp_dirs['root']}", flush=True)
 
         if param_grid:
             search, metrics, _ = run_cv_search(
@@ -307,6 +310,27 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     sub_file = _ROOT / "prob" / "cluster" / "run_prob.sub"
     n_jobs = _cpu_budget(sub_file=sub_file)
 
+    # Echo the resolved run identity + paths up front, so the condor .out file
+    # records which model's representations this job actually read and where it
+    # will write -- flush=True because stdout redirected to a file is block
+    # buffered and would otherwise show nothing until the job ends.
+    target_name = Path(target_file).stem
+    baseline_target_name = f"{target_name}_{baseline_tag}"
+    print(
+        "[prob] run: "
+        f"gnn={prob_config.get('gnn_model_type')} "
+        f"rmsd={prob_config.get('filter_rmsd_max_value')} "
+        f"split={prob_config.get('split_type')} "
+        f"target={target_name} layers={layer_nums}\n"
+        f"[prob] X / results root : {prob_config.output_dir}\n"
+        f"[prob] y (targets) from : {Path(prob_config.target_dir) / target_file}\n"
+        f"[prob] probes: linear={run_linear_models} "
+        f"non_linear={run_non_linear_models} "
+        f"({[e['name'] for e in nonlinear_probe_entries] if run_non_linear_models else []}) "
+        f"baseline={run_shuffled_baseline} n_jobs={n_jobs}",
+        flush=True,
+    )
+
     if use_wandb:
         target_name_for_run = Path(target_file).stem
         tags = [target_name_for_run, str(prob_config.get("gnn_model_type", ""))]
@@ -331,8 +355,6 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
         targets_file=target_file,
         return_mask=True,
     )
-    target_name = Path(target_file).stem
-    baseline_target_name = f"{target_name}_{baseline_tag}"
 
     if run_shuffled_baseline:
         y_shuffled, valid_mask_shuffled = load_y_by_ids(
@@ -409,12 +431,22 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     summary_csv = summary_dir / "summary_runs.csv"
     summary_df.to_csv(summary_csv, index=False)
 
+    written = [f"[prob] DONE {len(all_runs)} run(s) -> {summary_csv}"]
+
     if baseline_runs:
         baseline_summary_df = pd.DataFrame(baseline_runs)
         baseline_summary_dir = Path(prob_config.output_dir) / baseline_target_name / "experiments"
         baseline_summary_dir.mkdir(parents=True, exist_ok=True)
         baseline_summary_csv = baseline_summary_dir / "summary_runs.csv"
         baseline_summary_df.to_csv(baseline_summary_csv, index=False)
+        written.append(
+            f"[prob] DONE {len(baseline_runs)} baseline run(s) -> {baseline_summary_csv}"
+        )
+
+    # Per-experiment artifacts/reports/figures live one level deeper, under
+    # <target>/<probe>/<layer>/ -- run_probes prints each of those as it goes.
+    written.append(f"[prob] all outputs under: {prob_config.output_dir}")
+    print("\n".join(written), flush=True)
 
     return all_runs
 
