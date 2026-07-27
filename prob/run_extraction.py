@@ -49,7 +49,7 @@ class ProbingJobSpec:
     split_type: str = "random-k-fold"
     filter_rmsd_max_value: int | float | None = 2
     graph_level: bool = True
-    device: str = "cpu"
+    device: str = "auto"
     dtype_out: str | None = None
     k_fold: int = 5
     seed: int = 96
@@ -103,6 +103,25 @@ def resolve_paths(spec: ProbingJobSpec, fold: int) -> ResolvedPaths:
     )
 
 
+def resolve_device(requested: str | None) -> str:
+    """
+    Turn a requested device string into a concrete one.
+
+    "auto" (or None) picks CUDA when it is actually available, else CPU. An explicit
+    "cuda" request that cannot be honoured is a hard error: silently falling back to
+    CPU is how a GPU job ends up running for hours on the wrong device.
+    """
+    if requested in (None, "", "auto"):
+        return "cuda" if torch.cuda.is_available() else "cpu"
+    if requested.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            f"device={requested!r} requested but torch.cuda.is_available() is False "
+            f"(torch {getattr(torch, '__version__', '?')}). Check that the job was "
+            "granted a GPU and that the image's CUDA build matches the host driver."
+        )
+    return requested
+
+
 def _seed_everything(seed: int) -> None:
     random.seed(seed)
     try:
@@ -150,7 +169,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         graph_level=True,
         split_index=0,
         dtype_out=None,  # None means no dtype conversion
-        device="cpu",
+        device="auto",
         k_fold=5,
         seed=96,
         parse_args=False,  # keep CLI parsing out of this function by default
@@ -228,18 +247,29 @@ if __name__ == "__main__":
     parser.add_argument("--k_fold", default=5, type=int)
     parser.add_argument("--wandb_mode", default="disabled", choices=["disabled", "online", "offline"])
     parser.add_argument("--seed", default=96, type=int)
-    parser.add_argument("--device", default="cpu", type=str)
+    parser.add_argument("--device", default="auto", type=str, help='"auto" (default), "cpu", "cuda", "cuda:0", ...')
     parser.add_argument("--dtype_out", default=None, type=str)
     parser.add_argument("--save_representations", default=1, type=int, choices=[0, 1])
     parser.add_argument("--save_predictions", default=0, type=int, choices=[0, 1])
     args = parser.parse_args()
+
+    device = resolve_device(args.device)
+    if device.startswith("cuda"):
+        logger.info(
+            "Using GPU: %s (torch %s, CUDA %s)",
+            torch.cuda.get_device_name(0),
+            torch.__version__,
+            torch.version.cuda,
+        )
+    else:
+        logger.warning("Running on CPU (device=%s); extraction will be slow.", device)
 
     spec = ProbingJobSpec(
         gnn_model_type=args.gnn_model_type,
         split_type=args.split_type,
         filter_rmsd_max_value=int(args.filter_rmsd_max_value) if args.filter_rmsd_max_value is not None else None,
         graph_level=True,
-        device=args.device,
+        device=device,
         dtype_out=args.dtype_out,
         k_fold=args.k_fold,
         seed=args.seed,

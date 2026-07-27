@@ -111,7 +111,43 @@ def build_gnn_model(config: cfg.Config) -> RegressionModel:
 
 
 def _resolve_device(config: Config) -> torch.device:
-    return torch.device(config.device or "cpu")
+    requested = config.device or "auto"
+    if requested == "auto":
+        requested = "cuda" if torch.cuda.is_available() else "cpu"
+    return torch.device(requested)
+
+
+def _build_eval_loader(ds: KinodataDocked, config: Config, device: torch.device) -> DataLoader:
+    """
+    Inference loader. Under no_grad there is no activation memory to hold, so we use a
+    larger batch than training (`infer_batch_size`, default 4x `batch_size`). Batch size
+    does not affect outputs here: the model is in eval mode and pooling is per-graph via
+    `batch_index`.
+
+    Worker count is deliberately small rather than `CPU_COUNT`. Each worker forks the
+    in-memory dataset, and the prefetch buffer holds `num_workers * prefetch_factor *
+    batch_size` graphs, so a high count costs RAM and oversubscribes the CPUs the job
+    actually requested. A handful of workers is enough to stop the main process from
+    being the bottleneck.
+    """
+    batch_size = int(config.get("infer_batch_size", 0) or config.batch_size * 4)
+    on_gpu = device.type == "cuda"
+    num_workers = min(int(config.get("eval_num_workers", 4) or 0), max(CPU_COUNT - 1, 0)) if on_gpu else 0
+
+    logger.info(
+        "Eval loader: batch_size=%s num_workers=%s device=%s", batch_size, num_workers, device
+    )
+    kwargs = {}
+    if num_workers > 0:
+        kwargs.update(persistent_workers=True)
+    return DataLoader(
+        ds,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=on_gpu,
+        **kwargs,
+    )
 
 
 def _compute_fold_representations(
@@ -137,12 +173,12 @@ def _compute_fold_representations(
     dtype_out = dtype_resolve(config.dtype_out)
 
     gnn_model.eval().to(device)
-    loader = DataLoader(ds, batch_size=config.batch_size, shuffle=False)
+    loader = _build_eval_loader(ds, config, device)
 
     with torch.no_grad():
         for batch in tqdm(loader, desc="Computing graph representations"):
             idents.extend(batch.ident.tolist())
-            batch = batch.to(device)
+            batch = batch.to(device, non_blocking=True)
             pred, intermediate_node_reprs, _, _ = gnn_model(batch)
             preds.append(pred.detach().flatten().cpu())
             y_true.append(batch.y.detach().flatten().cpu())
