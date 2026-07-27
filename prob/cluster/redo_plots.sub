@@ -1,0 +1,24 @@
+universe = docker
+docker_image = gjoschka/kinodata3d-b0:2.3.0-cuda12.1
+executable = redo_plots.sh
+output = redo_plots.$(ClusterId).$(ProcId).out
+error = redo_plots.$(ClusterId).$(ProcId).err
+log = redo_plots.$(ClusterId).log
+should_transfer_files   = YES
+when_to_transfer_output = ON_EXIT
+request_GPUs = 0
+request_CPUs = 16
+request_memory = 16G
+requirements = UidDomain == "cs.uni-saarland.de"
++WantGPUHomeMounted = true
+
+# run_linear/run_nonlinear/run_baseline/nonlinear_models are forwarded by run_prob.sh as
+# PROB_RUN_LINEAR_MODELS / PROB_RUN_NON_LINEAR_MODELS / PROB_RUN_SHUFFLED_BASELINE /
+# PROB_NONLINEAR_MODELS env vars for prob_orchestrate.main() -- one job runs everything
+# requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
+arguments = $(script) $(split) $(rmsd) $(gnn) $(target)
+queue script, split, rmsd, gnn, target from (
+   replot_from_predictions, random-k-fold, 2, CGNN-3D, nitrogen_counts.pt
+   replot_from_predictions, random-k-fold, 2, CGNN-3D, hydrogen_bonds.pt
+   replot_from_predictions, random-k-fold, 2, CGNN-3D, weighted_hb_score.pt
+)

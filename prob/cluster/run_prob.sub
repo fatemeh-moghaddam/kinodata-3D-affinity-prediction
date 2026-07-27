@@ -1,14 +1,14 @@
 universe = docker
 docker_image = gjoschka/kinodata3d-b0:2.3.0-cuda12.1
 executable = run_prob.sh
-output = run_prob.$(ClusterId).$(ProcId).out
-error = run_prob.$(ClusterId).$(ProcId).err
-log = run_prob.$(ClusterId).log
+output = prob_CGNN.$(ClusterId).$(ProcId).out
+error = prob_CGNN.$(ClusterId).$(ProcId).err
+log = prob_CGNN.$(ClusterId).log
 should_transfer_files   = YES
 when_to_transfer_output = ON_EXIT
 request_GPUs = 1
-request_CPUs = 64
-request_memory = 64G
+request_CPUs = 16
+request_memory = 32G
 requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
 
@@ -18,6 +18,8 @@ requirements = UidDomain == "cs.uni-saarland.de"
 # requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
 arguments = $(script) $(split) $(rmsd) $(gnn) $(target) $(run_linear) $(run_nonlinear) $(run_baseline) $(nonlinear_models)
 queue script, split, rmsd, gnn, target, run_linear, run_nonlinear, run_baseline, nonlinear_models from (
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, affinity.pt, 0, 1, 0, random_forest
-   prob_orchestrate, random-k-fold, 2, CGNN-3D, docking_score.pt, 0, 1, 0, random_forest
+   prob_orchestrate, random-k-fold, 2, CGNN, affinity.pt, 1, 1, 1, 
+   prob_orchestrate, random-k-fold, 2, CGNN, hydrogen_bonds.pt, 1, 1, 1, 
+   prob_orchestrate, random-k-fold, 2, CGNN, weighted_hb_score.pt, 1, 1, 1, 
+   prob_orchestrate, random-k-fold, 2, CGNN, nitrogen_counts.pt, 1, 1, 1, 
 )
