@@ -75,6 +75,43 @@ def _save_and_show(fig, save_path: Optional[Path | str], show: bool = True) -> N
     plt.close(fig)
 
 
+def _regression_metrics_text(y_true: np.ndarray, y_pred: np.ndarray) -> str:
+    """Compute R2 and RMSE, formatted as a multi-line annotation string."""
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    rmse = np.sqrt(np.mean(np.square(y_pred - y_true)))
+    ss_res = np.sum(np.square(y_true - y_pred))
+    ss_tot = np.sum(np.square(y_true - y_true.mean()))
+    r2 = 1 - ss_res / ss_tot
+    mae = np.mean(np.abs(y_pred - y_true))
+    corr_coef = np.corrcoef(y_true, y_pred)[0, 1]
+
+
+    return f"$R^2$ = {r2:.3f}\nRMSE = {rmse:.3f}\nMAE = {mae:.3f}\nCorr = {corr_coef:.3f}"
+
+
+def _annotate_metrics(ax, y_true: np.ndarray, y_pred: np.ndarray, loc: str = "lower right") -> None:
+    """Draw an R2/RMSE text box in a corner of `ax` using axes-fraction coords."""
+    text = _regression_metrics_text(y_true, y_pred)
+
+    positions = {
+        "lower right": dict(x=0.97, y=0.03, ha="right", va="bottom"),
+        "upper right": dict(x=0.97, y=0.97, ha="right", va="top"),
+        "upper left": dict(x=0.03, y=0.97, ha="left", va="top"),
+        "lower left": dict(x=0.03, y=0.03, ha="left", va="bottom"),
+    }
+    pos = positions[loc]
+
+    ax.text(
+        pos["x"], pos["y"], text,
+        transform=ax.transAxes,
+        ha=pos["ha"], va=pos["va"],
+        fontsize=9,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.75, edgecolor="0.7"),
+    )
+
+
 def plot_parity(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -82,18 +119,58 @@ def plot_parity(
     save_path: Optional[Path] = None,
     show: bool = True,
     context_overwrite: None | str = None,
+    show_mean_line: bool = True,
+    annotate_variance_ratio: bool = False,
+    density: Optional[str] = "kde",  # None | "hexbin" | "kde",
+    density_cmap: str = "Blues_r",
+    show_metrics: bool = True,
 ) -> None:
-    """Scatter of predicted vs true with diagonal reference line."""
+    """Scatter of predicted vs true with diagonal reference line.
+
+    density: if set, replaces the scatter with a density-aware plot to
+        avoid overplotting artifacts at high point counts.
+        "hexbin" -> 2D hexbin with count colormap
+        "kde"    -> 2D kernel density estimate (filled contours)
+    """
     if context_overwrite is not None:
         sns.set_context(context_overwrite)
 
     lims = [min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())]
 
     g = sns.JointGrid(x=y_true, y=y_pred, space=0, height=FIG_SIZE_SQUARE[0])
-    g.plot_joint(sns.scatterplot, alpha=0.4, s=16, edgecolor="none")
+
+    if density is None:
+        g.plot_joint(sns.scatterplot, alpha=0.4, s=16, edgecolor="none")
+    elif density == "hexbin":
+        hb = g.ax_joint.hexbin(
+            y_true, y_pred, gridsize=80, cmap=density_cmap, mincnt=1, extent=lims + lims
+        )
+        g.fig.colorbar(hb, ax=g.ax_joint, label="count", fraction=0.046, pad=0.04)
+    elif density == "kde":
+        g.plot_joint(sns.kdeplot, fill=True, cmap=density_cmap, thresh=0.02, levels=20)
+    else:
+        raise ValueError(f"Unknown density mode: {density}")
+
     g.plot_marginals(sns.histplot, bins=30, fill=True, element="step")
     g.ax_joint.plot(lims, lims, "r--", linewidth=1.3)
+
+    if show_mean_line:
+        mean_true = y_true.mean()
+        g.ax_joint.axhline(
+            mean_true, color="gray", linestyle=":", linewidth=1.7,
+            label=f"mean(y_true)={mean_true:.2f}",
+        )
+        g.ax_joint.legend(loc="upper left", fontsize=8, frameon=False)
+
     g.set_axis_labels("True", "Predicted")
+
+    if show_metrics:
+        _annotate_metrics(g.ax_joint, y_true, y_pred, loc="lower right")
+
+    if annotate_variance_ratio:
+        ratio = y_pred.std() / y_true.std()
+        title = f"{title}  |  std(pred)/std(true)={ratio:.3f}"
+
     g.fig.suptitle(title, y=1.02)
     g.ax_joint.set_xlim(lims)
     g.ax_joint.set_ylim(lims)
@@ -107,17 +184,48 @@ def plot_residuals(
     title: str,
     save_path: Optional[Path] = None,
     show: bool = True,
+    vs_true: bool = True,
+    show_metrics: bool = True,
 ) -> None:
-    """Histogram of residuals (y_pred - y_true)."""
+    """Histogram of residuals (y_pred - y_true).
+
+    vs_true: adds a second panel plotting residuals against y_true,
+        which reveals patterned/shrinkage residuals that a plain
+        histogram can hide.
+    """
     residuals = y_pred - y_true
 
-    fig, ax = plt.subplots(figsize=(5.7, 4.3))
-    sns.histplot(residuals, bins=60, kde=True, ax=ax, color="C0", alpha=0.8)
-    ax.axvline(0, color="r", linestyle="--", linewidth=1.2)
-    ax.set_xlabel("Residual (y_pred - y_true)")
-    ax.set_ylabel("Count")
-    ax.set_title(title)
-    fig.tight_layout()
+    BINS = 60
+    COLOR = "C0"
+    ALPHA_HIST = 0.8
+
+    if not vs_true:
+        fig, ax = plt.subplots(figsize=(5.7, 4.3))
+        sns.histplot(residuals, bins=BINS, kde=True, ax=ax, color=COLOR, alpha=ALPHA_HIST)
+        ax.axvline(0, color="r", linestyle="--", linewidth=1.2)
+        ax.set_xlabel("Residual (y_pred - y_true)")
+        ax.set_ylabel("Count")
+        ax.set_title(title)
+        if show_metrics:
+            _annotate_metrics(ax, y_true, y_pred, loc="upper right")
+        fig.tight_layout()
+    else:
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(10.5, 4.3))
+
+        sns.histplot(residuals, bins=BINS, kde=True, ax=ax1, color=COLOR, alpha=ALPHA_HIST)
+        ax1.axvline(0, color="r", linestyle="--", linewidth=1.2)
+        ax1.set_xlabel("Residual (y_pred - y_true)")
+        ax1.set_ylabel("Count")
+        if show_metrics:
+            _annotate_metrics(ax1, y_true, y_pred, loc="upper right")
+
+        ax2.scatter(y_true, residuals, alpha=0.3, s=12, edgecolor="none")
+        ax2.axhline(0, color="r", linestyle="--", linewidth=1.2)
+        ax2.set_xlabel("True")
+        ax2.set_ylabel("Residual (y_pred - y_true)")
+
+        fig.suptitle(title)
+        fig.tight_layout()
 
     _save_and_show(fig, save_path, show)
 
