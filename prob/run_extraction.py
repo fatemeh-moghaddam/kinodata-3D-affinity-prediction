@@ -122,6 +122,31 @@ def resolve_device(requested: str | None) -> str:
     return requested
 
 
+def probe_layer_names(prob_config: cfg.Config, gnn_model_type: str) -> list[str]:
+    """
+    Names of the graph-representation artifacts a fold writes, for this model.
+
+    CGNN/CGNN-3D report one representation per attention block, `layer_1`..`layer_N`
+    (`layer_0`, the pre-network embedding, is written per fold but aggregated by
+    `extract_layer0.py` instead -- left as-is so existing runs keep resuming).
+
+    DTI has two towers of different depth. It reports a depth-aligned joint
+    representation per ligand-tower layer, `layer_0`..`layer_N`, which is what the
+    downstream probing reads and is directly comparable to the CGNN layers, plus the
+    per-tower representations behind them for branch-resolved analysis.
+    """
+    if gnn_model_type == "DTI":
+        num_ligand = int(prob_config.get("num_layers", 3))
+        num_pocket = int(prob_config.get("num_attention_blocks", 2))
+        return (
+            [f"layer_{i}" for i in range(num_ligand + 1)]
+            + [f"ligand_layer_{i}" for i in range(num_ligand + 1)]
+            + [f"pocket_layer_{i}" for i in range(num_pocket + 1)]
+        )
+    num_layers = int(prob_config.get("num_attention_blocks", 3))
+    return [f"layer_{i+1}" for i in range(num_layers)]
+
+
 def expected_fold_artifacts(prob_config: cfg.Config, spec: ProbingJobSpec) -> list[Path]:
     """
     Files `run_fold` will write for this fold, given what the spec asks to save.
@@ -131,8 +156,8 @@ def expected_fold_artifacts(prob_config: cfg.Config, spec: ProbingJobSpec) -> li
     fold_dir = Path(prob_config.output_dir) / str(fold)
     paths: list[Path] = []
     if spec.save_representations:
-        num_layers = int(prob_config.get("num_attention_blocks", 3))
-        paths += [fold_dir / f"layer_{i+1}_{fold}.pt" for i in range(num_layers)]
+        layer_names = probe_layer_names(prob_config, spec.gnn_model_type)
+        paths += [fold_dir / f"{name}_{fold}.pt" for name in layer_names]
         paths.append(fold_dir / f"ids_{fold}.pt")
     if spec.save_predictions:
         paths += [fold_dir / f"preds_{fold}.pt", fold_dir / f"y_true_{fold}.pt"]
@@ -384,8 +409,7 @@ if __name__ == "__main__":
         }
 
     agg_cfg = cfg.Config({"output_dir": output_root_dir, "k_fold": spec.k_fold})
-    num_layers = int(prob_config.get("num_attention_blocks", 3))
-    layer_names = [f"layer_{i+1}" for i in range(num_layers)]
+    layer_names = probe_layer_names(prob_config, spec.gnn_model_type)
 
     if spec.save_representations:
         for layer_name in layer_names:
