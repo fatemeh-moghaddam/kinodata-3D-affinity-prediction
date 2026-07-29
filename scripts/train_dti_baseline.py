@@ -23,6 +23,8 @@ if __name__ == "__main__":
     config = config.update_from_args()
     config = config.update_from_file()
     config["need_distances"] = False
+    # training needs a bare prediction from forward, not the probing 4-tuple
+    config["prob"] = False
 
     for key, value in config.items():
         print(f"{key}: {value}")
