@@ -44,24 +44,92 @@ class Decoder(Protocol):
 
 
 class DTIModel(RegressionModel):
+    """
+    Two-tower baseline: a ligand encoder and a pocket encoder whose pooled outputs
+    the decoder combines into one prediction.
+
+    `prob` mirrors `ComplexTransformer.prob`: when set, forward returns the same
+    4-tuple the probing extraction expects instead of a bare prediction. Training
+    needs a bare prediction, so leave it off there.
+    """
+
     def __init__(
         self,
         config: Config,
         ligand_encoder_cls: Callable[..., Encoder],
         pocket_encoder_cls: Callable[..., Encoder],
         decoder_cls: Callable[..., Decoder],
+        prob: bool = True,
     ) -> None:
         super().__init__(config)
         self.criterion = resolve_loss(config.loss_type)
         self.ligand_encoder = config.init(ligand_encoder_cls)
         self.pocket_encoder = config.init(pocket_encoder_cls)
         self.decoder = config.init(decoder_cls)
+        self.prob = prob
 
-    def forward(self, batch) -> Tensor:
+    def forward(self, batch):
+        if self.prob:
+            return self._forward_prob(batch)
         x_ligand, batch_ligand = self.ligand_encoder(batch)
         x_pocket, batch_pocket = self.pocket_encoder(batch)
         prediction = self.decoder(x_ligand, x_pocket, batch_ligand, batch_pocket)
         return prediction
+
+    def _forward_prob(self, batch):
+        """
+        Forward pass that also reports per-layer *graph-level* representations.
+
+        The two towers pool differently -- the ligand tower sums over a variable
+        number of atoms via its batch index, the pocket tower over the fixed 85
+        residues of a dense tensor -- so unlike `ComplexTransformer` there is no
+        single `aggr` a caller could apply afterwards. Pooling therefore happens
+        here, with each tower's own pooling, and the returned tensors are already
+        one row per complex (signalled to the extractor by a `None` batch index).
+        """
+        if not hasattr(self.decoder, "combined_representation"):
+            raise NotImplementedError(
+                f"prob mode needs a decoder exposing `combined_representation`, "
+                f"got {type(self.decoder).__name__}"
+            )
+
+        x_ligand, batch_ligand, ligand_layers = self.ligand_encoder(
+            batch, return_intermediates=True
+        )
+        x_pocket, batch_pocket, pocket_layers = self.pocket_encoder(
+            batch, return_intermediates=True
+        )
+        combined = self.decoder.combined_representation(
+            x_ligand, x_pocket, batch_ligand, batch_pocket
+        )
+        prediction = self.decoder.f_combined(combined)
+
+        ligand_pooled = [_sum_aggr(x, batch_ligand).detach() for x in ligand_layers]
+        pocket_pooled = [_sum_aggr(x, batch_pocket).detach() for x in pocket_layers]
+
+        graph_reprs = {}
+        for depth, x in enumerate(ligand_pooled):
+            graph_reprs[f"ligand_layer_{depth}"] = (x, None)
+        for depth, x in enumerate(pocket_pooled):
+            graph_reprs[f"pocket_layer_{depth}"] = (x, None)
+
+        # Depth-aligned joint representations, comparable to ComplexTransformer's
+        # `layer_i`. The towers can differ in depth (3 GINE layers vs 2 attention
+        # blocks in the trained baseline), so a tower that runs out keeps its last
+        # layer. The deepest one is the decoder input -- the analogue of the pooled
+        # representation ComplexTransformer feeds to its head.
+        last_pocket = len(pocket_pooled) - 1
+        for depth in range(len(ligand_pooled) - 1):
+            graph_reprs[f"layer_{depth}"] = (
+                torch.cat(
+                    (ligand_pooled[depth], pocket_pooled[min(depth, last_pocket)]),
+                    dim=-1,
+                ),
+                None,
+            )
+        graph_reprs[f"layer_{len(ligand_pooled) - 1}"] = (combined.detach(), None)
+
+        return prediction, graph_reprs, {}, combined.detach()
 
 
 class ResidueTransformer(Module):
@@ -90,13 +158,23 @@ class ResidueTransformer(Module):
         )
         return x
 
-    def forward(self, batch) -> Tuple[Tensor, Optional[Tensor]]:
+    def forward(self, batch, return_intermediates: bool = False):
+        """
+        With `return_intermediates`, additionally returns the residue representations
+        after every attention block, starting with the projected input (before any
+        attention). Used for probing; the default path is unchanged.
+        """
         x = (
             self.lin(self.get_residue_representation(batch))
             + self.positional_encoding.weight
         )
+        intermediates = [x]
         for attn in self.attention_blocks:
             x = attn(x)
+            if return_intermediates:
+                intermediates.append(x)
+        if return_intermediates:
+            return x, None, intermediates
         return x, None
 
 
@@ -150,6 +228,21 @@ class GlobalSumDecoder(Module):
         )
         self.feature_dim = feature_dim
 
+    def combined_representation(
+        self,
+        ligand_embeddings: Tensor,
+        pocket_embeddings: Tensor,
+        ligand_batch: Optional[Tensor] = None,
+        pocket_batch: Optional[Tensor] = None,
+    ) -> Tensor:
+        """
+        Everything the decoder computes up to (but excluding) the prediction head:
+        the per-complex vector that `f_combined` maps to an affinity.
+        """
+        ligand_repr = self.f_ligand(_sum_aggr(ligand_embeddings, ligand_batch))
+        pocket_repr = self.f_pocket(_sum_aggr(pocket_embeddings, pocket_batch))
+        return torch.cat((ligand_repr, pocket_repr), dim=self.feature_dim)
+
     def forward(
         self,
         ligand_embeddings: Tensor,
@@ -157,9 +250,9 @@ class GlobalSumDecoder(Module):
         ligand_batch: Optional[Tensor] = None,
         pocket_batch: Optional[Tensor] = None,
     ):
-        ligand_repr = self.f_ligand(_sum_aggr(ligand_embeddings, ligand_batch))
-        pocket_repr = self.f_pocket(_sum_aggr(pocket_embeddings, pocket_batch))
-        combined_repr = torch.cat((ligand_repr, pocket_repr), dim=self.feature_dim)
+        combined_repr = self.combined_representation(
+            ligand_embeddings, pocket_embeddings, ligand_batch, pocket_batch
+        )
         return self.f_combined(combined_repr)
 
 
@@ -177,4 +270,10 @@ def make_model(config):
         config["residue_size"] = 6
     else:
         raise ValueError(config.residue_featurization)
-    return DTIModel(config, LigandGINE, ResidueModel, GlobalSumDecoder)
+    return DTIModel(
+        config,
+        LigandGINE,
+        ResidueModel,
+        GlobalSumDecoder,
+        prob=config.get("prob", True),
+    )

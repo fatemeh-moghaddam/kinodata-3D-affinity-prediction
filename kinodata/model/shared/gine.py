@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import List, Tuple, Union
 
 from torch import Tensor
 from torch.nn import Module, ModuleList, Sequential, Linear, Embedding
@@ -27,10 +27,21 @@ class GINE(Module):
             self.norm_layers.append(LayerNorm(channels))
         self.lin_edge = Sequential(Linear(edge_channels, channels), self.act)
 
-    def forward(self, x: Tensor, edge_index: Tensor, edge_attr: Tensor) -> Tensor:
+    def forward(
+        self,
+        x: Tensor,
+        edge_index: Tensor,
+        edge_attr: Tensor,
+        return_intermediates: bool = False,
+    ) -> Union[Tensor, Tuple[Tensor, List[Tensor]]]:
         edge_attr = self.lin_edge(edge_attr.float())
+        intermediates = []
         for conv, norm in zip(self.conv_layers, self.norm_layers):
             x = norm(x + conv(x=x, edge_index=edge_index, edge_attr=edge_attr))
+            if return_intermediates:
+                intermediates.append(x)
+        if return_intermediates:
+            return x, intermediates
         return x
 
 
@@ -47,15 +58,24 @@ class LigandGINE(Module):
             hidden_channels, num_layers, edge_channels=NUM_BOND_TYPES, act=act
         )
 
-    def forward(self, batch) -> Tuple[Tensor, Tensor]:
+    def forward(self, batch, return_intermediates: bool = False):
+        """
+        With `return_intermediates`, additionally returns the node representations
+        after every layer, starting with the atom embedding (before any message
+        passing). Used for probing; the default path is unchanged.
+        """
         ligand = batch[NodeType.Ligand]
         ligand_bonds = batch[NodeType.Ligand, RelationType.Covalent, NodeType.Ligand]
         x = self.act_norm_nodes(
             self.atom_type_emb(ligand.z) + self.atom_feature_emb(ligand.x)
         )
-        h = self.gine(
+        out = self.gine(
             x=x,
             edge_index=ligand_bonds.edge_index,
             edge_attr=ligand_bonds.edge_attr,
+            return_intermediates=return_intermediates,
         )
-        return h, ligand.batch
+        if return_intermediates:
+            h, intermediates = out
+            return h, ligand.batch, [x] + intermediates
+        return out, ligand.batch
