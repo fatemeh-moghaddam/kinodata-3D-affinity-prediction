@@ -139,17 +139,24 @@ def plot_parity(
 
     g = sns.JointGrid(x=y_true, y=y_pred, space=0, height=FIG_SIZE_SQUARE[0])
 
-    if density is None:
-        g.plot_joint(sns.scatterplot, alpha=0.4, s=16, edgecolor="none")
-    elif density == "hexbin":
+    # if density is None:
+    #     g.plot_joint(sns.scatterplot, alpha=0.4, s=16, edgecolor="none")
+    # elif density == "hexbin":
+    # if density is None:
+    g.plot_joint(sns.scatterplot, alpha=0.5, s=16, edgecolor="black", color="none")
+    if density == "hexbin":
         hb = g.ax_joint.hexbin(
-            y_true, y_pred, gridsize=80, cmap=density_cmap, mincnt=1, extent=lims + lims
+            y_true, y_pred, gridsize=80, cmap=density_cmap, mincnt=1,
+            extent=lims + lims, alpha=0.85
         )
         g.fig.colorbar(hb, ax=g.ax_joint, label="count", fraction=0.046, pad=0.04)
     elif density == "kde":
-        g.plot_joint(sns.kdeplot, fill=True, cmap=density_cmap, thresh=0.02, levels=20)
+        g.plot_joint(sns.kdeplot, fill=True, cmap=density_cmap, thresh=0.02, levels=10, alpha=0.7)
     else:
         raise ValueError(f"Unknown density mode: {density}")
+
+    # scatter always last, on top
+    # g.plot_joint(sns.scatterplot, alpha=0.5, s=16, edgecolor="black", color="none")
 
     g.plot_marginals(sns.histplot, bins=30, fill=True, element="step")
     g.ax_joint.plot(lims, lims, "r--", linewidth=1.3)
@@ -219,7 +226,7 @@ def plot_residuals(
         if show_metrics:
             _annotate_metrics(ax1, y_true, y_pred, loc="upper right")
 
-        ax2.scatter(y_true, residuals, alpha=0.3, s=12, edgecolor="none")
+        ax2.scatter(y_true, residuals, alpha=0.3, s=12, edgecolor="darkgray")
         ax2.axhline(0, color="r", linestyle="--", linewidth=1.2)
         ax2.set_xlabel("True")
         ax2.set_ylabel("Residual (y_pred - y_true)")
