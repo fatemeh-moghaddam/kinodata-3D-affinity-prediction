@@ -187,7 +187,14 @@ def _compute_fold_representations(
             y_true.append(batch.y.detach().flatten().cpu())
 
             for layer_name, (node_repr, batch_index) in intermediate_node_reprs.items():
-                graph_repr = gnn_model.aggr(node_repr, batch_index).detach().cpu()
+                # A `None` batch index means the model already pooled to one row per
+                # complex. Models whose towers pool differently (DTI) have to do that
+                # themselves; ComplexTransformer always passes a real batch index, so
+                # its path is unaffected.
+                if batch_index is None:
+                    graph_repr = node_repr.detach().cpu()
+                else:
+                    graph_repr = gnn_model.aggr(node_repr, batch_index).detach().cpu()
                 if dtype_out is not None:
                     graph_repr = graph_repr.to(dtype_out)
                 layer_bufs.setdefault(layer_name, []).append(graph_repr)
