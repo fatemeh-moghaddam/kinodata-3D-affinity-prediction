@@ -2,9 +2,9 @@ universe = docker
 docker_image = gjoschka/kinodata3d-pt2.5.1-cu121-cudnn9
 executable = generate_prob_dataset.sh
 arguments = $(script) $(split) $(rmsd) $(gnn)
-output = gen_prob_ds.$(ClusterId).$(ProcId).out
-error = gen_prob_ds.$(ClusterId).$(ProcId).err
-log = gen_prob_ds.$(ClusterId).log
+output = gen_prob_ds_dti.$(ClusterId).$(ProcId).out
+error = gen_prob_ds_dti.$(ClusterId).$(ProcId).err
+log = gen_prob_ds_dti.$(ClusterId).log
 should_transfer_files   = YES
 when_to_transfer_output = ON_EXIT
 request_GPUs = 1
@@ -13,5 +13,6 @@ request_memory = 64G
 requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
 queue script, split, rmsd, gnn from (
-   run_extraction, random-k-fold, 2, DTI
+   run_extraction, random-k-fold, 6, CGNN
+   run_extraction, random-k-fold, 6, DTI
 )
