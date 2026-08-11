@@ -12,7 +12,7 @@ the same CLI arguments `run_prob.sh` forwards to `prob_orchestrate.py`
 
 The (target, prob_model, layer) experiments to visit mirror the pipeline: probe
 names come from the LINEAR_PROBES / NONLINEAR_PROBES registries, layers are
-[1, 2, 3], and each experiment's directories are resolved with `get_exp_dirs()`.
+[0, 1, 2, 3], and each experiment's directories are resolved with `get_exp_dirs()`.
 Experiments that were not run (no predictions CSV) are simply skipped.
 
 Usage
@@ -34,8 +34,10 @@ from prob.prob_config import get_ds_load_config
 from prob.prob_models import LINEAR_PROBES, NONLINEAR_PROBES
 from prob.prob_plots import plot_parity, plot_residuals
 
-# Same layers the orchestrator probes; all registered probe names.
-LAYER_NUMS = [1, 2, 3]
+# Same layers the orchestrator probes; all registered probe names. Layer 0 is
+# included for runs that have it -- experiments without a predictions CSV are
+# skipped, so listing it costs nothing where it was never probed.
+LAYER_NUMS = [0, 1, 2, 3]
 PROBE_NAMES = [entry["name"] for entry in (*LINEAR_PROBES, *NONLINEAR_PROBES)]
 
 
