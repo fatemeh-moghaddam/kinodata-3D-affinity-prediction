@@ -18,16 +18,9 @@ requirements = UidDomain == "cs.uni-saarland.de"
 # requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
 arguments = $(script) $(split) $(rmsd) $(gnn) $(target) $(run_linear) $(run_nonlinear) $(run_baseline) $(nonlinear_models)
 queue script, split, rmsd, gnn, target, run_linear, run_nonlinear, run_baseline, nonlinear_models from (
-   prob_orchestrate, random-k-fold, 6, CGNN, affinity.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, CGNN, hydrogen_bonds.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, CGNN, weighted_hb_score.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, CGNN, nitrogen_counts.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 2, DTI, affinity.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 2, DTI, hydrogen_bonds.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 2, DTI, weighted_hb_score.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 2, DTI, nitrogen_counts.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, DTI, affinity.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, DTI, hydrogen_bonds.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, DTI, weighted_hb_score.pt, 1, 1, 1, 
-   prob_orchestrate, random-k-fold, 6, DTI, nitrogen_counts.pt, 1, 1, 1, 
+   prob_orchestrate, random-k-fold, 2, CGNN, mw.pt, 1, 1, 1, mlp
+      prob_orchestrate, random-k-fold, 6, CGNN, mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, random-k-fold, 2, DTI, mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, random-k-fold, 6, CGNN-3D, mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, random-k-fold, 6, DTI, mw.pt, 1, 1, 1, mlp
 )

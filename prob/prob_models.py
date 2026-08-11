@@ -252,11 +252,11 @@ LINEAR_PROBES: List[Dict[str, Any]] = [
         "estimator": _ridge(),
         "param_grid": {"model__alpha": np.logspace(-5, 4, 10)},
     },
-    {
-        "name": "lasso",
-        "estimator": _lasso(),
-        "param_grid": {"model__alpha": np.logspace(-5, 1, 7)},
-    },
+    # {
+    #     "name": "lasso",
+    #     "estimator": _lasso(),
+    #     "param_grid": {"model__alpha": np.logspace(-5, 1, 7)},
+    # },
 ]
 
 # Non-linear probes: add more by appending. Both estimators default to
