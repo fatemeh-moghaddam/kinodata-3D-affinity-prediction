@@ -59,6 +59,36 @@ def _cpu_budget(default: int = 16, sub_file: Optional[Path] = None) -> int:
     return default
 
 
+def _resolve_layer_nums(prob_config: cfg.Config) -> List[int]:
+    """
+    Which layers to probe, in order.
+
+    By default: whatever aggregated representations actually exist in output_dir.
+    A model whose `layer_0.pt` has been aggregated gets layer 0 probed with no
+    config change; one whose hasn't is simply left out instead of crashing. DTI's
+    per-tower artifacts (`ligand_layer_*.pt` / `pocket_layer_*.pt`) deliberately do
+    not match the glob -- only the joint `layer_*.pt` representations are probed.
+
+    PROB_LAYERS overrides this with an explicit comma-separated list. That is how
+    you backfill a single layer into a target that has already been probed, without
+    recomputing the rest: PROB_LAYERS=0.
+    """
+    override = os.getenv("PROB_LAYERS", "")
+    if override.strip():
+        return [int(part) for part in override.split(",") if part.strip()]
+
+    layer_nums = sorted(
+        int(path.stem.split("_")[1])
+        for path in Path(prob_config.output_dir).glob("layer_*.pt")
+    )
+    if not layer_nums:
+        raise FileNotFoundError(
+            f"No aggregated layer_*.pt found under {prob_config.output_dir}. "
+            "Run the extraction (prob/run_extraction.py) for this model first."
+        )
+    return layer_nums
+
+
 # ─────────────────────────────────────────────────────────────
 # Probe runner (uses registry)
 # ─────────────────────────────────────────────────────────────
@@ -252,6 +282,37 @@ def non_linear_models(
     )
 
 
+def _write_summary(runs: List[Dict[str, Any]], summary_dir: Path) -> Path:
+    """
+    Write summary_runs.csv, merging with whatever is already there.
+
+    A run that probes only some layers -- PROB_LAYERS=0 to backfill layer 0 into a
+    target that was already probed for layers 1..3 -- must not erase the rows for
+    the layers it did not touch. Rows are keyed by (experiment, layer): re-running
+    a pair replaces its row, every other row is kept.
+    """
+    summary_dir.mkdir(parents=True, exist_ok=True)
+    summary_csv = summary_dir / "summary_runs.csv"
+    summary_df = pd.DataFrame(runs)
+
+    if summary_csv.exists():
+        previous = pd.read_csv(summary_csv)
+        keys = ["experiment", "layer"]
+        if set(keys) <= set(previous.columns) and set(keys) <= set(summary_df.columns):
+            replaced = set(zip(summary_df["experiment"], summary_df["layer"]))
+            keep = [
+                pair not in replaced
+                for pair in zip(previous["experiment"], previous["layer"])
+            ]
+            summary_df = pd.concat([previous[keep], summary_df], ignore_index=True)
+            summary_df = summary_df.sort_values(["layer", "experiment"]).reset_index(drop=True)
+        else:
+            summary_df = pd.concat([previous, summary_df], ignore_index=True)
+
+    summary_df.to_csv(summary_csv, index=False)
+    return summary_csv
+
+
 # ─────────────────────────────────────────────────────────────
 # Main entry point
 # ─────────────────────────────────────────────────────────────
@@ -264,7 +325,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     """
     all_runs: List[Dict[str, Any]] = []
     baseline_runs: List[Dict[str, Any]] = []
-    layer_nums = [1, 2, 3]
+    layer_nums = _resolve_layer_nums(prob_config)
     target_file = prob_config.get("target_file", TARGET_FILE) or None
     if not target_file:
         raise ValueError(
@@ -425,20 +486,17 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                 )
 
     # Single summary CSV after all layers
-    summary_df = pd.DataFrame(all_runs)
-    summary_dir = Path(prob_config.output_dir) / target_name / "experiments"
-    summary_dir.mkdir(parents=True, exist_ok=True)
-    summary_csv = summary_dir / "summary_runs.csv"
-    summary_df.to_csv(summary_csv, index=False)
+    summary_csv = _write_summary(
+        all_runs, Path(prob_config.output_dir) / target_name / "experiments"
+    )
 
     written = [f"[prob] DONE {len(all_runs)} run(s) -> {summary_csv}"]
 
     if baseline_runs:
-        baseline_summary_df = pd.DataFrame(baseline_runs)
-        baseline_summary_dir = Path(prob_config.output_dir) / baseline_target_name / "experiments"
-        baseline_summary_dir.mkdir(parents=True, exist_ok=True)
-        baseline_summary_csv = baseline_summary_dir / "summary_runs.csv"
-        baseline_summary_df.to_csv(baseline_summary_csv, index=False)
+        baseline_summary_csv = _write_summary(
+            baseline_runs,
+            Path(prob_config.output_dir) / baseline_target_name / "experiments",
+        )
         written.append(
             f"[prob] DONE {len(baseline_runs)} baseline run(s) -> {baseline_summary_csv}"
         )

@@ -126,14 +126,18 @@ def probe_layer_names(prob_config: cfg.Config, gnn_model_type: str) -> list[str]
     """
     Names of the graph-representation artifacts a fold writes, for this model.
 
-    CGNN/CGNN-3D report one representation per attention block, `layer_1`..`layer_N`
-    (`layer_0`, the pre-network embedding, is written per fold but aggregated by
-    `extract_layer0.py` instead -- left as-is so existing runs keep resuming).
+    Every model reports `layer_0` -- the embedding before any message passing -- so
+    it is aggregated here along with the rest. It always was written per fold; it
+    just used to be left unaggregated, which is what `extract_layer0.py` existed to
+    repair by recomputing it. New runs no longer need that, and `aggregate_layer0.py`
+    backfills older runs straight from their fold files.
+
+    CGNN/CGNN-3D then report one representation per attention block, up to `layer_N`.
 
     DTI has two towers of different depth. It reports a depth-aligned joint
-    representation per ligand-tower layer, `layer_0`..`layer_N`, which is what the
-    downstream probing reads and is directly comparable to the CGNN layers, plus the
-    per-tower representations behind them for branch-resolved analysis.
+    representation per ligand-tower layer, which is what the downstream probing reads
+    and is directly comparable to the CGNN layers, plus the per-tower representations
+    behind them for branch-resolved analysis.
     """
     if gnn_model_type == "DTI":
         num_ligand = int(prob_config.get("num_layers", 3))
@@ -144,7 +148,7 @@ def probe_layer_names(prob_config: cfg.Config, gnn_model_type: str) -> list[str]
             + [f"pocket_layer_{i}" for i in range(num_pocket + 1)]
         )
     num_layers = int(prob_config.get("num_attention_blocks", 3))
-    return [f"layer_{i+1}" for i in range(num_layers)]
+    return [f"layer_{i}" for i in range(num_layers + 1)]
 
 
 def expected_fold_artifacts(prob_config: cfg.Config, spec: ProbingJobSpec) -> list[Path]:

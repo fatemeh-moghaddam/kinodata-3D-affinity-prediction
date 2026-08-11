@@ -1,6 +1,11 @@
 """
 Standalone extraction of pre-network graph representations as layer_0.
 
+Rarely needed now: `run_extraction.py` aggregates `layer_0` along with every other
+layer, and `aggregate_layer0.py` backfills older runs from the fold files they
+already have, without recomputing anything. Reach for this script only when the
+fold files themselves predate `layer_0` being reported at all.
+
 This script does not modify or call `_compute_fold_representations`; it reruns
 the model over each fold and writes fold artifacts in the existing style:
   - layer_0_<fold>.pt
