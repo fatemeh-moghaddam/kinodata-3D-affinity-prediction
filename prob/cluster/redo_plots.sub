@@ -18,7 +18,13 @@ requirements = UidDomain == "cs.uni-saarland.de"
 # requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
 arguments = $(script) $(split) $(rmsd) $(gnn) $(target)
 queue script, split, rmsd, gnn, target from (
-   replot_from_predictions, random-k-fold, 2, CGNN-3D, nitrogen_counts.pt
-   replot_from_predictions, random-k-fold, 2, CGNN-3D, hydrogen_bonds.pt
-   replot_from_predictions, random-k-fold, 2, CGNN-3D, weighted_hb_score.pt
+   replot_from_predictions, random-k-fold, 2, CGNN-3D, affinity.pt
+   replot_from_predictions, random-k-fold, 2, CGNN-3D, docking_score.pt
+   replot_from_predictions, random-k-fold, 2, CGNN-3D, hydrophobic_interactions.pt
+   replot_from_predictions, random-k-fold, 6, CGNN-3D, affinity.pt
+   replot_from_predictions, random-k-fold, 6, CGNN-3D, hydrogen_bonds.pt
+   replot_from_predictions, random-k-fold, 6, CGNN-3D, nitrogen_counts.pt
+   replot_from_predictions, random-k-fold, 2, CGNN, affinity.pt
+   replot_from_predictions, random-k-fold, 2, CGNN, hydrogen_bonds.pt
+   replot_from_predictions, random-k-fold, 2, CGNN, nitrogen_counts.pt
 )
