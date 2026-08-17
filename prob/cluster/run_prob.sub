@@ -1,15 +1,15 @@
 universe = docker
 docker_image = gjoschka/kinodata3d-b0:2.3.0-cuda12.1
 executable = run_prob.sh
-output = prob_CGNN_DTI.$(ClusterId).$(ProcId).out
-error = prob_CGNN_DTI.$(ClusterId).$(ProcId).err
-log = prob_CGNN_DTI.$(ClusterId).log
+output = probe_hb_no_mw.$(ClusterId).$(ProcId).out
+error = probe_hb_no_mw.$(ClusterId).$(ProcId).err
+log = probe_hb_no_mw.$(ClusterId).log
 should_transfer_files   = YES
 when_to_transfer_output = ON_EXIT
 request_GPUs = 1
 request_CPUs = 16
 request_memory = 32G
-requirements = UidDomain == "cs.uni-saarland.de"
+# requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
 
 # run_linear/run_nonlinear/run_baseline/nonlinear_models are forwarded by run_prob.sh as
@@ -18,9 +18,10 @@ requirements = UidDomain == "cs.uni-saarland.de"
 # requested for its target (linear, non-linear subset, baseline) in a single process/wandb run.
 arguments = $(script) $(split) $(rmsd) $(gnn) $(target) $(run_linear) $(run_nonlinear) $(run_baseline) $(nonlinear_models)
 queue script, split, rmsd, gnn, target, run_linear, run_nonlinear, run_baseline, nonlinear_models from (
-   prob_orchestrate, random-k-fold, 2, CGNN, mw.pt, 1, 1, 1, mlp
-      prob_orchestrate, random-k-fold, 6, CGNN, mw.pt, 1, 1, 1, mlp
-   prob_orchestrate, random-k-fold, 2, DTI, mw.pt, 1, 1, 1, mlp
-   prob_orchestrate, random-k-fold, 6, CGNN-3D, mw.pt, 1, 1, 1, mlp
-   prob_orchestrate, random-k-fold, 6, DTI, mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, scaffold-k-fold, 2, CGNN-3D, hbond_score_no_mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, scaffold-k-fold, 2, CGNN, hbond_score_no_mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, scaffold-k-fold, 2, DTI, hbond_score_no_mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, scaffold-k-fold, 2, DTI, mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, scaffold-k-fold, 2, CGNN, mw.pt, 1, 1, 1, mlp
+   prob_orchestrate, scaffold-k-fold, 2, CGNN-3D, mw.pt, 1, 1, 1, mlp
 )
