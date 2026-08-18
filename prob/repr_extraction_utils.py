@@ -2,7 +2,7 @@
 Build and run probing pipeline: dataset subset, GNN model, and per-fold representation extraction.
 
 Public API:
-  - build_kd_ds(split_path) -> KinodataDocked
+  - build_kd_ds(split_path, filter_rmsd_max_value, include_val) -> KinodataDocked
   - build_gnn_model(config) -> RegressionModel
   - run_fold(ds, gnn_model, config) -> None
 
@@ -29,10 +29,11 @@ import kinodata.configuration as cfg
 from kinodata.configuration import Config
 from kinodata.data import KinodataDocked
 from kinodata.data.data_split import Split
+from kinodata.data.dataset import Filtered
 from kinodata.model.complex_transformer import RegressionModel
 from kinodata.model.complex_transformer import make_model as make_complex_transformer
 from kinodata.model.dti import make_model as make_dti_baseline
-from kinodata.transform import TransformToComplexGraph
+from kinodata.transform import FilterDockingRMSD, TransformToComplexGraph
 from tqdm import tqdm
 
 from prob.paths_and_io import save_out_tensor
@@ -59,26 +60,88 @@ GNN_MAKERS = {
 # ─────────────────────────────────────────────────────────────
 
 
-def build_kd_ds(split_path: Union[str, Path, None] = None) -> KinodataDocked:
+def _assert_split_matches_filter(
+    split_path: Path, filter_rmsd_max_value: float | None
+) -> None:
     """
-    Build the subset of KinodataDocked for a given split (test + val indices).
+    Guard the index space of a split file against the dataset it will index.
 
-    Loads the full dataset, indexes by split, then drops the full dataset to free memory.
+    A split CSV holds *positional indices into the dataset it was generated from*,
+    even though `Split.to_data_frame` names the column "ident". `generate_splits.py`
+    generates the ones under data/processed/filter_predicted_rmsd_le<x>.00/ against
+    the `Filtered` dataset, so indexing the unfiltered `KinodataDocked` with them
+    silently addresses entirely different complexes -- no error, no shape mismatch,
+    just the wrong molecules. Fail loudly instead.
+    """
+    expected = (
+        None
+        if filter_rmsd_max_value is None
+        else f"filter_predicted_rmsd_le{float(filter_rmsd_max_value):.2f}"
+    )
+    found = next(
+        (p for p in split_path.parts if p.startswith("filter_predicted_rmsd_le")), None
+    )
+    if found != expected:
+        raise ValueError(
+            f"Split file {split_path} was generated against "
+            f"{found or 'the unfiltered dataset'}, but the dataset is being built with "
+            f"filter_rmsd_max_value={filter_rmsd_max_value} ({expected or 'no filter'}). "
+            "The split's indices are positional and would address the wrong complexes."
+        )
+
+
+def build_kd_ds(
+    split_path: Union[str, Path, None] = None,
+    filter_rmsd_max_value: float | None = None,
+    include_val: bool = False,
+) -> KinodataDocked:
+    """
+    Build the evaluation subset of KinodataDocked for one CV fold.
+
+    `filter_rmsd_max_value` must match the split file's RMSD cutoff: the split's
+    indices are positions in the *filtered* dataset, so the same `Filtered` wrapper
+    the training pipeline used (see `make_kinodata_module`) has to be applied here
+    before indexing. `_assert_split_matches_filter` enforces this.
+
+    include_val=False (default) evaluates the fold's test split only. Checkpoints were
+    selected on min val/mae, so val predictions are not clean held-out data and must
+    not go into affinity metrics compared against the paper. Set include_val=True to
+    recover the larger test+val sample for representation probing.
+
+    Loads the dataset, indexes by split, then drops the full dataset to free memory.
     """
     if split_path is None:
         raise ValueError("split_path must be provided")
     split_path = Path(split_path) if isinstance(split_path, str) else split_path
     if not split_path.exists():
         raise FileNotFoundError(f"Split file not found: {split_path}")
+    _assert_split_matches_filter(split_path, filter_rmsd_max_value)
 
     split = Split.from_csv(split_path)
-    full_ds = KinodataDocked(
-        transform=TransformToComplexGraph(remove_heterogeneous_representation=False),
+    transform = TransformToComplexGraph(remove_heterogeneous_representation=False)
+    base_ds = KinodataDocked(
         use_multiprocessing=True,
         num_processes=CPU_COUNT,
     )
-    ds = full_ds[[*split.test_split, *split.val_split]]
-    del full_ds
+    if filter_rmsd_max_value is None:
+        base_ds.transform = transform
+        full_ds = base_ds
+    else:
+        full_ds = Filtered(base_ds, FilterDockingRMSD(filter_rmsd_max_value))(
+            transform=transform
+        )
+
+    indices = [*split.test_split, *(split.val_split if include_val else [])]
+    out_of_range = [i for i in indices if not 0 <= i < len(full_ds)]
+    if out_of_range:
+        raise IndexError(
+            f"{len(out_of_range)} index/indices from {split_path} fall outside the "
+            f"{len(full_ds)}-sample dataset (e.g. {out_of_range[:5]}). The split was "
+            "generated against a different dataset than the one being indexed."
+        )
+
+    ds = full_ds[indices]
+    del full_ds, base_ds
     gc.collect()
     return ds
 

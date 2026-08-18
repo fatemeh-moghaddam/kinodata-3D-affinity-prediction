@@ -56,6 +56,9 @@ class ProbingJobSpec:
     wandb_mode: str = "disabled"
     save_representations: bool = True
     save_predictions: bool = False
+    # Evaluate the fold's test split only. Checkpoints were selected on min val/mae,
+    # so val is not clean held-out data; include it only for representation probing.
+    include_val: bool = False
 
 
 @dataclass(frozen=True)
@@ -298,6 +301,15 @@ if __name__ == "__main__":
     parser.add_argument("--save_representations", default=1, type=int, choices=[0, 1])
     parser.add_argument("--save_predictions", default=0, type=int, choices=[0, 1])
     parser.add_argument(
+        "--include_val",
+        default=0,
+        type=int,
+        choices=[0, 1],
+        help="also evaluate the fold's val split (default: test only). Val was used for "
+             "checkpoint selection, so including it biases affinity metrics; use it only "
+             "to enlarge the representation-probing sample.",
+    )
+    parser.add_argument(
         "--overwrite",
         default=0,
         type=int,
@@ -328,6 +340,7 @@ if __name__ == "__main__":
         seed=args.seed,
         save_representations=bool(args.save_representations),
         save_predictions=bool(args.save_predictions),
+        include_val=bool(args.include_val),
     )
     _validate_spec(spec)
 
@@ -391,7 +404,11 @@ if __name__ == "__main__":
         if gnn_model is None:
             raise RuntimeError("Failed to build GNN model")
 
-        ds = build_kd_ds(split_path=prob_config.split_file)
+        ds = build_kd_ds(
+            split_path=prob_config.split_file,
+            filter_rmsd_max_value=spec.filter_rmsd_max_value,
+            include_val=spec.include_val,
+        )
         if len(ds) == 0:
             raise ValueError("Probing dataset is empty")
 

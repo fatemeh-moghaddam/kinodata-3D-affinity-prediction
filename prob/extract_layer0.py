@@ -35,12 +35,18 @@ from prob.resloves_and_transforms import aggregate_folds, aggregate_ids, dtype_r
 logger = logging.getLogger(__name__)
 
 
-def _extract_layer0_fold(prob_config: cfg.Config) -> None:
+def _extract_layer0_fold(prob_config: cfg.Config, include_val: bool = False) -> None:
     device = torch.device(prob_config.device or "cpu")
     dtype_out = dtype_resolve(prob_config.dtype_out)
 
     gnn_model = build_gnn_model(prob_config).eval().to(device)
-    ds = build_kd_ds(split_path=prob_config.split_file)
+    # include_val must match the run whose fold artifacts this backfills, or the
+    # layer_0 rows will not line up with that fold's ids.pt / other layer tensors.
+    ds = build_kd_ds(
+        split_path=prob_config.split_file,
+        filter_rmsd_max_value=prob_config.filter_rmsd_max_value,
+        include_val=include_val,
+    )
     loader = DataLoader(ds, batch_size=prob_config.batch_size, shuffle=False)
 
     required = ("atomic_num_embedding", "lin_atom_features", "act", "aggr")
@@ -99,6 +105,13 @@ def main() -> None:
     parser.add_argument("--seed", default=96, type=int)
     parser.add_argument("--device", default="cpu", type=str)
     parser.add_argument("--dtype_out", default=None, type=str)
+    parser.add_argument(
+        "--include_val",
+        default=0,
+        type=int,
+        choices=[0, 1],
+        help="must match the run being backfilled (see run_extraction.py --include_val)",
+    )
     args = parser.parse_args()
 
     spec = ProbingJobSpec(
@@ -112,6 +125,7 @@ def main() -> None:
         dtype_out=args.dtype_out,
         k_fold=args.k_fold,
         seed=args.seed,
+        include_val=bool(args.include_val),
     )
     _validate_spec(spec)
 
@@ -135,7 +149,7 @@ def main() -> None:
             k_fold=spec.k_fold,
             seed=spec.seed,
         )
-        _extract_layer0_fold(prob_config)
+        _extract_layer0_fold(prob_config, include_val=spec.include_val)
 
     agg_cfg = cfg.Config({"output_dir": output_root_dir, "k_fold": spec.k_fold})
     aggregate_folds(agg_cfg, "layer_0")
