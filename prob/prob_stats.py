@@ -11,9 +11,29 @@ from typing import Callable, Dict, Optional
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 from prob.prob_metrics import evaluate_predictions
+
+
+def _rmse(y: np.ndarray, y_pred: np.ndarray) -> float:
+    return float(np.sqrt(mean_squared_error(y, y_pred)))
+
+
+def _pearson(y: np.ndarray, y_pred: np.ndarray) -> float:
+    # Undefined if either side is constant (can happen in a bootstrap resample).
+    if np.std(y) == 0 or np.std(y_pred) == 0:
+        return float("nan")
+    return float(np.corrcoef(y, y_pred)[0, 1])
+
+
+# Metrics bootstrapped everywhere in this module: short name -> fn(y_true, y_pred).
+METRIC_FNS: Dict[str, Callable[[np.ndarray, np.ndarray], float]] = {
+    "r2": r2_score,
+    "rmse": _rmse,
+    "mae": mean_absolute_error,
+    "pearson": _pearson,
+}
 
 
 def bootstrap_ci(
@@ -23,6 +43,7 @@ def bootstrap_ci(
     n_bootstrap: int = 1000,
     random_state: Optional[int] = None,
     confidence: float = 0.95,
+    name: Optional[str] = None,
 ) -> Dict[str, float]:
     """
     Bootstrap confidence interval for a single metric (default: R²).
@@ -40,14 +61,13 @@ def bootstrap_ci(
         idx = rng.integers(0, n, size=n)
         boot_scores.append(metric_fn(y_true[idx], y_pred[idx]))
 
-    boot_scores = np.array(boot_scores)
+    boot_scores = np.array(boot_scores, dtype=float)
     alpha = 1 - confidence
-    lower = float(np.percentile(boot_scores, 100 * alpha / 2))
-    upper = float(np.percentile(boot_scores, 100 * (1 - alpha / 2)))
+    lower = float(np.nanpercentile(boot_scores, 100 * alpha / 2))
+    upper = float(np.nanpercentile(boot_scores, 100 * (1 - alpha / 2)))
 
-    name = getattr(metric_fn, "__name__", "metric")
     return {
-        "metric": name,
+        "metric": name or getattr(metric_fn, "__name__", "metric"),
         "point_estimate": point,
         "lower": lower,
         "upper": upper,
@@ -64,28 +84,21 @@ def run_probe_statistical_tests(
     random_state: Optional[int] = None,
 ) -> Dict[str, Dict[str, float]]:
     """
-    Run bootstrap CIs for R² and RMSE on (y_true, y_pred).
+    Run bootstrap CIs for every metric in METRIC_FNS on (y_true, y_pred).
     Returns a dict suitable for inclusion in probe summary JSON, e.g.:
-      {"r2_ci": {...}, "rmse_ci": {...}}
+      {"r2_ci": {...}, "rmse_ci": {...}, "mae_ci": {...}, "pearson_ci": {...}}
     """
-    def rmse(y, yp):
-        return float(np.sqrt(mean_squared_error(y, yp)))
-
-    r2_ci = bootstrap_ci(
-        y_true, y_pred,
-        metric_fn=r2_score,
-        n_bootstrap=n_bootstrap,
-        random_state=random_state,
-        confidence=confidence,
-    )
-    rmse_ci = bootstrap_ci(
-        y_true, y_pred,
-        metric_fn=rmse,
-        n_bootstrap=n_bootstrap,
-        random_state=random_state,
-        confidence=confidence,
-    )
-    return {"r2_ci": r2_ci, "rmse_ci": rmse_ci}
+    return {
+        f"{name}_ci": bootstrap_ci(
+            y_true, y_pred,
+            metric_fn=fn,
+            n_bootstrap=n_bootstrap,
+            random_state=random_state,
+            confidence=confidence,
+            name=name,
+        )
+        for name, fn in METRIC_FNS.items()
+    }
 
 
 def summarize_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
@@ -113,10 +126,10 @@ def compare_two_conditions(
     
     They must share the same y_true values in the same order (paired on test samples).
     
-    Returns dict with:
-      - delta_r2, delta_r2_ci_low, delta_r2_ci_high, delta_r2_bootstrap_pval
-      - delta_rmse, delta_rmse_ci_low, delta_rmse_ci_high, delta_rmse_bootstrap_pval
-      - median_delta_squared_error, wilcoxon_pval
+    Returns dict with, for each metric in METRIC_FNS (r2, rmse, mae, pearson):
+      - delta_<metric>, delta_<metric>_ci_low, delta_<metric>_ci_high,
+        delta_<metric>_bootstrap_pval
+    plus median_delta_squared_error and wilcoxon_pval.
     """
     from scipy.stats import wilcoxon
     
@@ -137,19 +150,14 @@ def compare_two_conditions(
     rng = np.random.default_rng(random_state)
     n = len(y_true)
     
-    # Bootstrap R² deltas with shared resampling
-    r2_deltas = np.empty(n_bootstrap, dtype=float)
-    rmse_deltas = np.empty(n_bootstrap, dtype=float)
+    # Bootstrap per-metric deltas with shared resampling
+    deltas = {name: np.empty(n_bootstrap, dtype=float) for name in METRIC_FNS}
     for i in range(n_bootstrap):
         idx = rng.integers(0, n, size=n)
-        r2_a = float(r2_score(y_true[idx], y_pred_a[idx]))
-        r2_b = float(r2_score(y_true[idx], y_pred_b[idx]))
-        r2_deltas[i] = r2_a - r2_b
-        
-        rmse_a = float(np.sqrt(mean_squared_error(y_true[idx], y_pred_a[idx])))
-        rmse_b = float(np.sqrt(mean_squared_error(y_true[idx], y_pred_b[idx])))
-        rmse_deltas[i] = rmse_a - rmse_b
-    
+        yt = y_true[idx]
+        for name, fn in METRIC_FNS.items():
+            deltas[name][i] = fn(yt, y_pred_a[idx]) - fn(yt, y_pred_b[idx])
+
     # Wilcoxon signed-rank test on squared errors
     se_a = np.square(y_pred_a - y_true)
     se_b = np.square(y_pred_b - y_true)
@@ -160,39 +168,25 @@ def compare_two_conditions(
         # Occurs if all differences are zero
         wilcoxon_pval = 1.0
     
-    # Point estimates
     alpha = 1 - confidence
-    r2_point = float(r2_score(y_true, y_pred_a) - r2_score(y_true, y_pred_b))
-    rmse_point = float(np.sqrt(mean_squared_error(y_true, y_pred_a)) - np.sqrt(mean_squared_error(y_true, y_pred_b)))
-    
-    # CIs from bootstrap
-    r2_ci_low = float(np.percentile(r2_deltas, 100 * alpha / 2))
-    r2_ci_high = float(np.percentile(r2_deltas, 100 * (1 - alpha / 2)))
-    rmse_ci_low = float(np.percentile(rmse_deltas, 100 * alpha / 2))
-    rmse_ci_high = float(np.percentile(rmse_deltas, 100 * (1 - alpha / 2)))
-    
-    # Two-sided bootstrap p-values
-    r2_pval = float(min(1.0, 2.0 * min(np.mean(r2_deltas <= 0), np.mean(r2_deltas >= 0))))
-    rmse_pval = float(min(1.0, 2.0 * min(np.mean(rmse_deltas <= 0), np.mean(rmse_deltas >= 0))))
-    
-    # Median delta squared error
-    median_delta_se = float(np.median(se_a - se_b))
-    
-    return {
+    result = {
         "condition_a": condition_a_name,
         "condition_b": condition_b_name,
         "n_samples": int(n),
-        "delta_r2": r2_point,
-        "delta_r2_ci_low": r2_ci_low,
-        "delta_r2_ci_high": r2_ci_high,
-        "delta_r2_bootstrap_pval": r2_pval,
-        "delta_rmse": rmse_point,
-        "delta_rmse_ci_low": rmse_ci_low,
-        "delta_rmse_ci_high": rmse_ci_high,
-        "delta_rmse_bootstrap_pval": rmse_pval,
-        "median_delta_squared_error": median_delta_se,
-        "wilcoxon_pval": wilcoxon_pval,
     }
+    for name, fn in METRIC_FNS.items():
+        d = deltas[name]
+        result[f"delta_{name}"] = float(fn(y_true, y_pred_a) - fn(y_true, y_pred_b))
+        result[f"delta_{name}_ci_low"] = float(np.nanpercentile(d, 100 * alpha / 2))
+        result[f"delta_{name}_ci_high"] = float(np.nanpercentile(d, 100 * (1 - alpha / 2)))
+        # Two-sided bootstrap p-value
+        result[f"delta_{name}_bootstrap_pval"] = float(
+            min(1.0, 2.0 * min(np.nanmean(d <= 0), np.nanmean(d >= 0)))
+        )
+
+    result["median_delta_squared_error"] = float(np.median(se_a - se_b))
+    result["wilcoxon_pval"] = wilcoxon_pval
+    return result
 
 
 def _holm_bonferroni_correction(pvalues: np.ndarray) -> np.ndarray:
@@ -238,10 +232,10 @@ def compare_multiple_conditions(
     Returns:
         DataFrame with one row per pairwise comparison, including:
         - condition_a, condition_b
-        - delta_r2, delta_r2_ci_low, delta_r2_ci_high, delta_r2_bootstrap_pval
-        - delta_rmse, delta_rmse_ci_low, delta_rmse_ci_high, delta_rmse_bootstrap_pval
+        - delta_<metric>{,_ci_low,_ci_high,_bootstrap_pval} for each metric in
+          METRIC_FNS (r2, rmse, mae, pearson)
         - median_delta_squared_error, wilcoxon_pval
-        - delta_r2_bootstrap_pval_holm, delta_rmse_bootstrap_pval_holm, wilcoxon_pval_holm (corrected)
+        - a *_holm column per p-value column (Holm-Bonferroni corrected)
     """
     condition_names = sorted(conditions_dict.keys())
     if len(condition_names) < 2:
@@ -278,7 +272,8 @@ def compare_multiple_conditions(
     df = pd.DataFrame(results)
     
     # Apply Holm-Bonferroni correction to all p-value columns
-    for pval_col in ["delta_r2_bootstrap_pval", "delta_rmse_bootstrap_pval", "wilcoxon_pval"]:
+    pval_cols = [f"delta_{name}_bootstrap_pval" for name in METRIC_FNS] + ["wilcoxon_pval"]
+    for pval_col in pval_cols:
         corrected_col = f"{pval_col}_holm"
         df[corrected_col] = _holm_bonferroni_correction(df[pval_col].to_numpy())
     
