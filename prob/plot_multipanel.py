@@ -11,6 +11,8 @@ Reuses from prob.plots:
 """
 from __future__ import annotations
 
+import inspect
+import itertools
 import math
 from pathlib import Path
 from typing import Callable, Mapping, Optional, Sequence
@@ -21,6 +23,7 @@ import pandas as pd
 import seaborn as sns
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+from prob.paths_and_io import load_run_predictions
 from prob.prob_plots import _annotate_metrics, _save_and_show
 
 
@@ -162,6 +165,182 @@ def plot_parity_grid(
         fig.suptitle(suptitle, y=1.0, fontsize=13)
     fig.tight_layout()
     _save_and_show(fig, save_path, show)
+
+
+# ─────────────────────────────────────────────────────────────
+# Factor x factor grids straight off a find_probe_runs frame
+# ─────────────────────────────────────────────────────────────
+
+def _levels(runs: pd.DataFrame, column: str, order: Optional[Sequence] = None) -> list:
+    """Values of `column` to lay out, in order. Given orders are filtered to
+    what is actually present, so a global preference list can be reused."""
+    present = list(pd.unique(runs[column].dropna()))
+    if order is None:
+        return sorted(present, key=lambda v: (isinstance(v, str), v))
+    return [v for v in order if v in present]
+
+
+def _slug(value) -> str:
+    return str(value).replace(" ", "").replace("/", "-").replace("=", "")
+
+
+def parity_panel(ax, run, *, cache: dict | None = None, **kwargs) -> None:
+    """Default cell drawer: the parity panel for one run row."""
+    y_true, y_pred = _load_cached(run, cache)
+    parity_on_ax(ax, y_true, y_pred, **kwargs)
+
+
+def _load_cached(run, cache: dict | None):
+    if cache is None:
+        return load_run_predictions(run)
+    key = str(run.predictions_path)
+    if key not in cache:
+        cache[key] = load_run_predictions(run)
+    return cache[key]
+
+
+def plot_run_grid(
+    runs: pd.DataFrame,
+    row: str,
+    col: str,
+    *,
+    per: str | Sequence[str] | None = None,
+    panel: Callable = parity_panel,
+    row_order: Optional[Sequence] = None,
+    col_order: Optional[Sequence] = None,
+    panel_size: float = 3.4,
+    shared_lims: bool = True,
+    suptitle: Optional[str] = None,
+    save_dir: Optional[Path] = None,
+    save_stem: Optional[str] = None,
+    show: bool = True,
+    **panel_kwargs,
+) -> list[dict]:
+    """One figure per `per` combination, laid out as `row` x `col` panels.
+
+    This is the generic form of the hand-built dicts in the notebook: give it a
+    (filtered) `find_probe_runs` frame and two factor column names and it takes
+    care of levels, empty cells, margin labels, shared axes limits and titles.
+
+        plot_run_grid(runs, "gnn_model_type", "layer", per=["rmsd_threshold", "target"])
+        plot_run_grid(runs, "prob_model", "gnn_model_type", per=["target", "layer"])
+
+    Any other factor left unpinned is *not* faceted -- it silently collides in a
+    cell -- so either filter it out beforehand or name it in `per`. Cells with
+    more than one run keep the first and are reported once at the end.
+
+    panel: callable(ax, run_row, **panel_kwargs). Defaults to the parity panel;
+        pass your own to reuse the layout for any per-run figure. Panels that
+        accept a `lims` keyword get the shared range injected.
+    per: column(s) to hold fixed per figure; one figure per observed combination.
+    save_dir: figures are written to `save_dir/<stem>__<per values>` (the usual
+        `figures/` subdir and `.png` are appended by `_save_and_show`).
+
+    Returns the list of `per` value dicts actually drawn, in figure order.
+    """
+    if runs.empty:
+        raise ValueError("No runs to plot -- the filtered frame is empty.")
+
+    per_cols = [per] if isinstance(per, str) else list(per or [])
+    for column in [row, col, *per_cols]:
+        if column not in runs.columns:
+            raise KeyError(f"{column!r} is not a column of the runs frame")
+
+    groups = ([({}, runs)] if not per_cols else
+              [(dict(zip(per_cols, key if isinstance(key, tuple) else (key,))), block)
+               for key, block in runs.groupby(per_cols, dropna=False, sort=True)])
+
+    takes_lims = _accepts(panel, "lims")
+    takes_cache = _accepts(panel, "cache")
+    collisions, drawn = [], []
+
+    for values, block in groups:
+        row_levels = _levels(block, row, row_order)
+        col_levels = _levels(block, col, col_order)
+        if not row_levels or not col_levels:
+            continue
+
+        cache: dict = {}
+        cells: dict[tuple, pd.Series] = {}
+        for r, c in itertools.product(row_levels, col_levels):
+            hit = block[(block[row] == r) & (block[col] == c)]
+            if hit.empty:
+                continue
+            if len(hit) > 1:
+                collisions.append((values, r, c, len(hit)))
+            cells[(r, c)] = hit.iloc[0]
+
+        lims = None
+        if shared_lims and takes_lims:
+            preds = [_load_cached(run, cache) for run in cells.values()]
+            if preds:
+                lims = [min(min(t.min(), p.min()) for t, p in preds),
+                        max(max(t.max(), p.max()) for t, p in preds)]
+
+        fig, axes = plt.subplots(
+            len(row_levels), len(col_levels),
+            figsize=(panel_size * len(col_levels), panel_size * len(row_levels)),
+            squeeze=False,
+        )
+
+        for i, r in enumerate(row_levels):
+            for j, c in enumerate(col_levels):
+                ax = axes[i][j]
+                run = cells.get((r, c))
+                if run is None:
+                    ax.set_xticks([])
+                    ax.set_yticks([])
+                    ax.text(0.5, 0.5, "no run", transform=ax.transAxes,
+                            ha="center", va="center", color="0.6", fontsize=9)
+                else:
+                    kwargs = dict(panel_kwargs)
+                    if takes_lims and lims is not None:
+                        kwargs["lims"] = lims
+                    if takes_cache:
+                        kwargs["cache"] = cache
+                    panel(ax, run, **kwargs)
+                    ax.set_title("")
+                if i == 0:
+                    ax.set_title(f"{col} = {c}", fontsize=10)
+                if j == 0:
+                    # Anchored on the y-label artist rather than axes fraction,
+                    # so the row header never lands on top of it.
+                    ax.annotate(f"{row} = {r}", xy=(0, 0.5),
+                                xytext=(-ax.yaxis.labelpad - 8, 0),
+                                xycoords=ax.yaxis.label, textcoords="offset points",
+                                rotation=90, ha="right", va="center", fontsize=11)
+                else:
+                    ax.set_ylabel("")
+                if i != len(row_levels) - 1:
+                    ax.set_xlabel("")
+
+        head = suptitle or f"{row} x {col}"
+        tail = ", ".join(f"{k}={v}" for k, v in values.items())
+        fig.suptitle(f"{head} -- {tail}" if tail else head, fontsize=13)
+        fig.tight_layout()
+
+        save_path = None
+        if save_dir is not None:
+            stem = save_stem or f"grid_{row}_x_{col}"
+            suffix = "__".join(f"{k}{_slug(v)}" for k, v in values.items())
+            save_path = Path(save_dir) / (f"{stem}__{suffix}" if suffix else stem)
+        _save_and_show(fig, save_path, show)
+        drawn.append(values)
+
+    for values, r, c, n in collisions:
+        print(f"[plot_run_grid] {n} runs in cell {row}={r}, {col}={c} "
+              f"{values or ''} -- drew the first; pin the extra factor in `per`.")
+    return drawn
+
+
+def _accepts(fn: Callable, name: str) -> bool:
+    """Does `fn` take a `name` keyword (explicitly or via **kwargs)?"""
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return name in params or any(p.kind is inspect.Parameter.VAR_KEYWORD
+                                 for p in params.values())
 
 
 # ─────────────────────────────────────────────────────────────

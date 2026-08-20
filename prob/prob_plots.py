@@ -341,12 +341,17 @@ def plot_dist_with_log(
     save_path: Optional[Path] = None,
     show: bool = True,
     context_overwrite: None | str = None,
+    show_log_y: bool = True,
 ) -> None:
     """Side-by-side linear / log-count histogram of a column."""
     if context_overwrite is not None:
         sns.set_context(context_overwrite)
 
-    fig, axes = plt.subplots(1, 2, figsize=FIG_SIZE_WIDE, sharex=True)
+    if show_log_y:
+        fig, axes = plt.subplots(1, 2, figsize=FIG_SIZE_WIDE, sharex=True)
+    else:
+        fig, axes = plt.subplots(1, 1, figsize=FIG_SIZE_SQUARE)
+        axes = [axes]  # make it iterable
 
     # linear
     sns.histplot(
@@ -370,26 +375,30 @@ def plot_dist_with_log(
         ax_ecdf.set_ylim(0, 1)
 
     # log y
-    sns.histplot(
-        data=df,
-        x=col,
-        bins=bins,
-        kde=kde,
-        stat="count",
-        # log_scale=(False, True),
-        element="bars",      # force rectangles
-        fill=True,
-        edgecolor="black",
-        alpha=0.85,
-        ax=axes[1],
-    )
-    axes[1].set_yscale("symlog", linthresh=20)
-    axes[1].set_xlabel(col)
-    axes[1].set_ylabel("Count (log scale)")
-    axes[1].set_title(f"{title or col} (log-scaled)")
+    if show_log_y:
+        sns.histplot(
+            data=df,
+            x=col,
+            bins=bins,
+            kde=kde,
+            stat="count",
+            # log_scale=(False, True),
+            element="bars",      # force rectangles
+            fill=True,
+            edgecolor="black",
+            alpha=0.85,
+            ax=axes[1],
+        )
+        axes[1].set_yscale("symlog", linthresh=20)
+        axes[1].set_xlabel(col)
+        axes[1].set_ylabel("Count (log scale)")
+        axes[1].set_title(f"{title or col} (log-scaled)")
 
     if show_ecdf:
-        ax_ecdf = axes[1].twinx()
+        if show_log_y:
+            ax_ecdf = axes[1].twinx()
+        else:
+            ax_ecdf = axes[0].twinx()
         sns.ecdfplot(
             data=df,
             x=col,
