@@ -63,7 +63,10 @@ def gnn_model(prob_config):
 
 @pytest.fixture(scope="session")
 def kd_ds(prob_config):
-    ds = build_kd_ds(split_path=prob_config.split_file)
+    ds = build_kd_ds(
+        split_path=prob_config.split_file,
+        filter_rmsd_max_value=prob_config.filter_rmsd_max_value,
+    )
     return ds
 
 
