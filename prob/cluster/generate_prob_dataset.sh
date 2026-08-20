@@ -19,5 +19,9 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 python3 -c "import torch; print('cuda available:', torch.cuda.is_available(), '| devices:', torch.cuda.device_count())"
 
+# $5 = overwrite (1/0): recompute folds whose artifacts are already on disk instead of
+# skipping them. Defaults to 0 so queue lines that omit it keep the resume behavior.
+OVERWRITE="${5:-0}"
+
 python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" \
-    --device cuda --save_representations 1 --save_predictions 1
+    --device cuda --save_representations 1 --save_predictions 1 --overwrite "${OVERWRITE}"
