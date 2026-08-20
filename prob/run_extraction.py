@@ -55,10 +55,10 @@ class ProbingJobSpec:
     seed: int = 96
     wandb_mode: str = "disabled"
     save_representations: bool = True
-    save_predictions: bool = False
+    save_predictions: bool = True
     # Evaluate the fold's test split only. Checkpoints were selected on min val/mae,
     # so val is not clean held-out data; include it only for representation probing.
-    include_val: bool = False
+    include_val: bool = True
 
 
 @dataclass(frozen=True)
@@ -302,7 +302,7 @@ if __name__ == "__main__":
     parser.add_argument("--save_predictions", default=0, type=int, choices=[0, 1])
     parser.add_argument(
         "--include_val",
-        default=0,
+        default=1,
         type=int,
         choices=[0, 1],
         help="also evaluate the fold's val split (default: test only). Val was used for "

@@ -129,20 +129,27 @@ def aggregate_predictions(config: cfg.Config) -> None:
     """
     Aggregate preds_<fold>.pt / y_true_<fold>.pt across all folds (written by
     run_fold when save_predictions=True) and save as a single
-    config.output_dir/predictions.csv with columns y_true, y_pred.
+    config.output_dir/predictions.csv with columns fold, y_true, y_pred.
+
+    Fold identity is kept because the paper reports one metric per fold and
+    boxplots those k values; a single MAE over the pooled rows is a different
+    statistic.
     """
     output_dir = config.output_dir
     k_fold = config.get('k_fold', 5)
 
     pred_tensors: List[torch.Tensor] = []
     y_true_tensors: List[torch.Tensor] = []
+    fold_labels: List[torch.Tensor] = []
     for fold in range(k_fold):
         fold_dir = output_dir / str(fold)
         preds_path = fold_dir / f"preds_{fold}.pt"
         y_true_path = fold_dir / f"y_true_{fold}.pt"
         if preds_path.exists() and y_true_path.exists():
-            pred_tensors.append(torch.load(preds_path))
+            preds = torch.load(preds_path)
+            pred_tensors.append(preds)
             y_true_tensors.append(torch.load(y_true_path))
+            fold_labels.append(torch.full((preds.shape[0],), fold, dtype=torch.long))
         else:
             print(f"Warning: {preds_path} or {y_true_path} does not exist.")
 
@@ -152,9 +159,12 @@ def aggregate_predictions(config: cfg.Config) -> None:
 
     y_pred = torch.cat(pred_tensors, dim=0).numpy()
     y_true = torch.cat(y_true_tensors, dim=0).numpy()
+    folds = torch.cat(fold_labels, dim=0).numpy()
 
     aggregated_path = output_dir / "predictions.csv"
-    pd.DataFrame({"y_true": y_true, "y_pred": y_pred}).to_csv(aggregated_path, index=False)
+    pd.DataFrame({"fold": folds, "y_true": y_true, "y_pred": y_pred}).to_csv(
+        aggregated_path, index=False
+    )
     print(f"Aggregated predictions saved to {aggregated_path}")
 
     return
