@@ -1,0 +1,2423 @@
+<title>Probe Sweep Explorer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  color-scheme: light;
+
+  /* surfaces & ink — dataviz reference instance, warm neutral family */
+  --plane:        #f9f9f7;
+  --surface:      #fcfcfb;
+  --surface-2:    #f2f1ed;
+  --ink:          #0b0b0b;
+  --ink-2:        #52514e;
+  --ink-muted:    #898781;
+  --grid:         #e1e0d9;
+  --axis:         #c3c2b7;
+  --border:       rgba(11,11,11,0.10);
+  --border-hard:  rgba(11,11,11,0.18);
+
+  /* categorical slots, fixed order */
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
+  --s5: #e87ba4; --s6: #008300; --s7: #4a3aa7; --s8: #e34948;
+
+  /* sequential blue 100 -> 700 */
+  --q1: #cde2fb; --q2: #b7d3f6; --q3: #9ec5f4; --q4: #86b6ef; --q5: #6da7ec;
+  --q6: #5598e7; --q7: #3987e5; --q8: #2a78d6; --q9: #256abf; --q10: #1c5cab;
+  --q11: #184f95; --q12: #104281; --q13: #0d366b;
+
+  --good:     #006300;
+  --warning:  #fab219;
+  --critical: #d03b3b;
+
+  --focus: #2a78d6;
+  --radius: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --plane:        #0d0d0d;
+    --surface:      #1a1a19;
+    --surface-2:    #232321;
+    --ink:          #ffffff;
+    --ink-2:        #c3c2b7;
+    --ink-muted:    #898781;
+    --grid:         #2c2c2a;
+    --axis:         #383835;
+    --border:       rgba(255,255,255,0.10);
+    --border-hard:  rgba(255,255,255,0.20);
+
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+    --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+
+    --good:     #0ca30c;
+    --critical: #d03b3b;
+    --focus: #3987e5;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --plane:        #0d0d0d;
+  --surface:      #1a1a19;
+  --surface-2:    #232321;
+  --ink:          #ffffff;
+  --ink-2:        #c3c2b7;
+  --ink-muted:    #898781;
+  --grid:         #2c2c2a;
+  --axis:         #383835;
+  --border:       rgba(255,255,255,0.10);
+  --border-hard:  rgba(255,255,255,0.20);
+
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
+  --s5: #d55181; --s6: #008300; --s7: #9085e9; --s8: #e66767;
+
+  --good:     #0ca30c;
+  --critical: #d03b3b;
+  --focus: #3987e5;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--plane);
+  color: var(--ink);
+  font-family: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 28px 24px 72px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* ---------- header ---------- */
+
+header { display: flex; flex-direction: column; gap: 6px; }
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+h1 {
+  margin: 0;
+  font-size: 27px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.lede {
+  margin: 2px 0 0;
+  max-width: 68ch;
+  color: var(--ink-2);
+}
+
+/* ---------- control bar ---------- */
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.controls {
+  padding: 14px 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 14px 18px;
+}
+
+.field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+
+.field > label, .field > .field-label {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  white-space: nowrap;
+}
+
+select, .dd-toggle, button.btn {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  background: var(--surface-2);
+  border: 1px solid var(--border-hard);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  cursor: pointer;
+  min-height: 32px;
+}
+
+select:focus-visible, .dd-toggle:focus-visible, button:focus-visible,
+input:focus-visible, .tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+button.btn:hover, .dd-toggle:hover { border-color: var(--ink-muted); }
+
+/* multiselect dropdown */
+.dd { position: relative; }
+.dd-toggle {
+  display: inline-flex; align-items: center; gap: 8px;
+  text-align: left; white-space: nowrap;
+}
+.dd-toggle .count {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--ink-2);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.dd-toggle .caret { color: var(--ink-muted); font-size: 10px; }
+.dd-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 210px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-hard);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.14);
+  display: none;
+}
+.dd.open .dd-menu { display: block; }
+.dd-menu .opt {
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 7px; border-radius: 4px; cursor: pointer;
+  font-size: 13px;
+}
+.dd-menu .opt:hover { background: var(--surface-2); }
+.dd-menu .opt input { accent-color: var(--focus); margin: 0; }
+.dd-menu .opt .n {
+  margin-left: auto;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 11px; color: var(--ink-muted);
+}
+.dd-actions {
+  display: flex; gap: 6px; padding: 5px 7px 2px;
+  border-top: 1px solid var(--border); margin-top: 5px;
+}
+.dd-actions button {
+  font: inherit; font-size: 11.5px; background: none; border: none;
+  color: var(--focus); cursor: pointer; padding: 2px 4px; border-radius: 3px;
+}
+
+/* ---------- tabs ---------- */
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.tab {
+  font: inherit; font-size: 13.5px; font-weight: 500;
+  background: none; border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--ink-2);
+  padding: 9px 14px; cursor: pointer;
+  margin-bottom: -1px;
+}
+.tab:hover { color: var(--ink); }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--focus); }
+
+/* ---------- stat strip ---------- */
+
+.stats { display: flex; flex-wrap: wrap; gap: 1px; background: var(--border); overflow: hidden; border-radius: var(--radius); border: 1px solid var(--border); }
+.stat { background: var(--surface); padding: 11px 16px; flex: 1 1 150px; min-width: 0; }
+.stat .k {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase;
+  color: var(--ink-muted);
+}
+.stat .v { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin-top: 2px; }
+.stat .v small { font-size: 12px; font-weight: 400; color: var(--ink-2); margin-left: 4px; letter-spacing: 0; }
+
+/* ---------- chart area ---------- */
+
+.viewbody { display: flex; flex-direction: column; gap: 14px; }
+
+.chartcard { padding: 16px; }
+.chartcard h2 {
+  margin: 0 0 2px; font-size: 15px; font-weight: 600; letter-spacing: -0.005em;
+}
+.chartcard .sub { margin: 0; font-size: 12.5px; color: var(--ink-2); max-width: 78ch; }
+
+.cardhead {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; margin-bottom: 12px; flex-wrap: wrap;
+}
+.cardtools { display: flex; align-items: center; gap: 8px; flex: none; }
+.cardtools select { padding: 4px 6px; min-height: 28px; font-size: 12px; }
+.cardtools .btn { padding: 4px 10px; min-height: 28px; font-size: 12px; }
+.cardtools .btn[disabled] { opacity: 0.5; cursor: default; }
+
+#toast {
+  position: fixed; z-index: 95; left: 50%; bottom: 26px;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border-hard); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.20);
+  padding: 10px 14px; font-size: 12.5px; max-width: min(560px, 90vw);
+  opacity: 0; pointer-events: none;
+  transition: opacity 140ms linear, transform 140ms ease-out;
+}
+#toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast b { font-weight: 600; }
+
+.scroller { overflow-x: auto; }
+
+svg { display: block; }
+svg text { font-family: "IBM Plex Sans", system-ui, sans-serif; }
+.tick { font-size: 11px; fill: var(--ink-muted); font-family: "IBM Plex Mono", ui-monospace, monospace; }
+.axlabel { font-size: 11.5px; fill: var(--ink-2); }
+.facet-title { font-size: 12px; fill: var(--ink); font-weight: 600; }
+.gridline { stroke: var(--grid); stroke-width: 1; }
+.axisline { stroke: var(--axis); stroke-width: 1; }
+.zeroline { stroke: var(--critical); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.75; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; align-items: center; }
+.legend .item { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--ink-2); }
+.legend .swatch { width: 11px; height: 11px; border-radius: 3px; flex: none; }
+.legend .line { width: 16px; height: 2px; border-radius: 2px; flex: none; }
+
+/* "How to read this" -- the standing explanations, out of the way until asked
+   for. Conditional warnings stay as .notice, visible, because they are actions. */
+.howto { margin-top: 12px; font-size: 12.5px; }
+.howto > summary {
+  cursor: pointer; color: var(--ink-muted); list-style: none;
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.07em; text-transform: uppercase;
+  padding: 3px 0; width: max-content;
+}
+.howto > summary::-webkit-details-marker { display: none; }
+.howto > summary::before { content: "+ "; }
+.howto[open] > summary::before { content: "\2212 "; }
+.howto > summary:hover { color: var(--ink); }
+.howto > summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.howto .body {
+  color: var(--ink-2); max-width: 74ch;
+  padding: 6px 0 2px; display: flex; flex-direction: column; gap: 5px;
+}
+
+.notice {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 10px 13px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--border);
+  font-size: 12.5px; color: var(--ink-2);
+}
+.notice .marker {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-weight: 600; font-size: 11px; letter-spacing: 0.06em;
+  color: var(--ink); flex: none; padding-top: 1px;
+}
+.notice.warn { border-left: 3px solid var(--warning); }
+.notice.choose { border-left: 3px solid var(--critical); }
+.notice .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.notice .acts button {
+  font: inherit; font-size: 12px;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border-hard); border-radius: 999px;
+  padding: 3px 11px; cursor: pointer;
+}
+.notice .acts button:hover { border-color: var(--ink-muted); }
+.notice .acts button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+.empty { padding: 42px 16px; text-align: center; color: var(--ink-muted); font-size: 13.5px; }
+
+/* ---------- table ---------- */
+
+table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--surface);
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--ink-muted); font-weight: 500; cursor: pointer;
+  border-bottom: 1px solid var(--border-hard);
+}
+th:hover { color: var(--ink); }
+td.num { text-align: right; font-family: "IBM Plex Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--surface-2); }
+.tablewrap { max-height: 620px; overflow: auto; }
+
+/* ---------- tooltip ---------- */
+
+#tip {
+  position: fixed; z-index: 90; pointer-events: none;
+  background: var(--surface); color: var(--ink);
+  border: 1px solid var(--border-hard); border-radius: var(--radius);
+  box-shadow: 0 6px 20px rgba(0,0,0,0.18);
+  padding: 9px 11px; font-size: 12px; max-width: 300px;
+  opacity: 0; transition: opacity 90ms linear;
+}
+#tip.on { opacity: 1; }
+#tip .tt-title { font-weight: 600; margin-bottom: 5px; }
+#tip .tt-row { display: flex; justify-content: space-between; gap: 14px; color: var(--ink-2); }
+#tip .tt-row b { color: var(--ink); font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500; }
+#tip .tt-sep { height: 1px; background: var(--grid); margin: 6px 0; }
+
+footer {
+  border-top: 1px solid var(--border);
+  padding-top: 16px; margin-top: 6px;
+  font-size: 12.5px; color: var(--ink-2);
+  display: flex; flex-direction: column; gap: 8px;
+}
+footer code {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: 12px; background: var(--surface-2);
+  padding: 1px 5px; border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+@media (max-width: 720px) {
+  .wrap { padding: 20px 14px 56px; }
+  h1 { font-size: 22px; }
+}
+</style>
+
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">Linear probing sweep &middot; kinodata-3D</div>
+  <h1>Probe Sweep Explorer</h1>
+  <p class="lede">Filter to the comparison you want, then read it four ways.</p>
+</header>
+
+<div class="panel controls" id="controls"></div>
+
+<div class="stats" id="stats"></div>
+
+<div class="tabs" role="tablist" id="tabs"></div>
+
+<div class="viewbody" id="view"></div>
+
+<footer>
+  <details class="howto">
+    <summary>Reading the numbers</summary>
+    <div class="body">
+      <div><b>One run is one estimate.</b> Fold predictions are collapsed before they
+      reach disk, so there are no replicates and nothing here is a distribution. The
+      interval on a mark is the bootstrap CI the pipeline already wrote.</div>
+      <div><b>R&sup2; is the only cross-target metric.</b> RMSE and MAE carry each
+      target's own units &mdash; daltons for molecular weight, pKd for affinity, counts
+      for bonds.</div>
+      <div><b>&Delta;R&sup2;</b> subtracts the paired <code>shuffled_ident</code>
+      baseline. That control sits at R&sup2; &asymp; 0 across the sweep (mean
+      &minus;0.005, sd 0.008), so &Delta;R&sup2; and R&sup2; agree closely.</div>
+    </div>
+  </details>
+  <div id="provenance"></div>
+</footer>
+
+</div>
+
+<div id="tip" role="status" aria-live="polite"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script id="runs-data" type="application/json">__RUNS_JSON__</script>
+
+<script>
+(function () {
+"use strict";
+
+// ─────────────────────────────────────────────────────────────
+// Data
+// ─────────────────────────────────────────────────────────────
+
+// Everything the page knows about the sweep is declared in prob/explorer/build.py
+// and travels in this payload -- factors, metrics, extra columns, opening slice.
+// Nothing below hard-codes a column name.
+var PAYLOAD = JSON.parse(document.getElementById("runs-data").textContent);
+var CONFIG = PAYLOAD.config;
+var RUNS = PAYLOAD.runs;
+
+var FACTORS = CONFIG.factors;
+var FKEYS = FACTORS.map(function (f) { return f.key; });
+var FLABEL = {}, FFMT = {};
+FACTORS.forEach(function (f) {
+  FLABEL[f.key] = f.label;
+  FFMT[f.key] = { prefix: f.prefix || "", suffix: f.suffix || "" };
+});
+
+var METRICS = CONFIG.metrics;
+var METRIC_ORDER = CONFIG.metricOrder;
+var EXTRA_COLUMNS = CONFIG.extraColumns || [];
+
+// The factor the depth curves put on the x axis (declared in build.py).
+var XKEY = CONFIG.defaults.depthAxis || "layer";
+
+var SERIES = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+var SEQ = ["--q1","--q2","--q3","--q4","--q5","--q6","--q7","--q8","--q9","--q10","--q11","--q12","--q13"];
+
+function cssvar(name) {
+  return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
+// sort levels: numbers numerically, strings alphabetically
+function levelsOf(key, rows) {
+  var seen = {}, out = [];
+  rows.forEach(function (r) {
+    var v = r[key];
+    if (v === null || v === undefined) return;
+    var k = String(v);
+    if (!(k in seen)) { seen[k] = true; out.push(v); }
+  });
+  var allNum = out.every(function (v) { return typeof v === "number"; });
+  out.sort(allNum
+    ? function (a, b) { return a - b; }
+    : function (a, b) { return String(a).localeCompare(String(b)); });
+  return out;
+}
+
+var ALL_LEVELS = {};
+FKEYS.forEach(function (k) { ALL_LEVELS[k] = levelsOf(k, RUNS); });
+
+// ─────────────────────────────────────────────────────────────
+// State
+// ─────────────────────────────────────────────────────────────
+
+// A named factor from build.py if it still exists, else the nth one present --
+// so renaming or dropping a factor degrades to a sane view instead of a blank one.
+function pickFactor(name, fallbackIndex) {
+  if (name && FKEYS.indexOf(name) !== -1) return name;
+  return FKEYS[Math.min(fallbackIndex, FKEYS.length - 1)];
+}
+
+// Like pickFactor, but "" is a legitimate answer: a facet axis can be unset,
+// and a facet may never be the factor already on the x axis.
+function pickFacet(name) {
+  return (name && name !== XKEY && FKEYS.indexOf(name) !== -1) ? name : "";
+}
+
+var D = CONFIG.defaults;
+
+var state = {
+  metric: D.metric,
+  view: "curves",
+  filter: {},            // key -> {level:true}
+  curveSeries: pickFactor(D.colourBy, 1),
+  curveFacetRow: pickFacet(D.facetRowBy),
+  curveFacetCol: pickFacet(D.facetColBy),
+  curveWrap: D.panelsPerRow || "auto",
+  curveScale: D.yScale || "free",
+  aggregate: D.aggregate || "split",
+  matRow: pickFactor(D.matrixRow, 0),
+  matCol: pickFactor(D.matrixCol, 2),
+  rankColor: pickFactor(D.colourBy, 1),
+  sortKey: D.metric,
+  sortDir: -1,
+  pngScale: D.pngScale || 3,
+  pngTheme: D.pngTheme || "light"
+};
+FKEYS.forEach(function (k) {
+  var sel = {};
+  ALL_LEVELS[k].forEach(function (v) { sel[String(v)] = true; });
+  state.filter[k] = sel;
+});
+// Open on a readable slice rather than the whole sweep at once; every other
+// level stays one click away in the filter menus. Set in build.py.
+Object.keys(CONFIG.defaults.filter || {}).forEach(function (k) {
+  if (!(k in state.filter)) return;
+  var wanted = CONFIG.defaults.filter[k], sel = {}, any = false;
+  ALL_LEVELS[k].forEach(function (v) {
+    var on = wanted.indexOf(String(v)) !== -1;
+    sel[String(v)] = on;
+    any = any || on;
+  });
+  if (any) state.filter[k] = sel;   // ignore a default that matches nothing
+});
+
+function filtered() {
+  return RUNS.filter(function (r) {
+    for (var i = 0; i < FKEYS.length; i++) {
+      var k = FKEYS[i];
+      var v = r[k];
+      if (v === null || v === undefined) return false;
+      if (!state.filter[k][String(v)]) return false;
+    }
+    return true;
+  });
+}
+
+function metricOf(r) {
+  var v = r[state.metric];
+  return (v === null || v === undefined) ? null : v;
+}
+
+function fmt(v, dec) {
+  if (v === null || v === undefined || !isFinite(v)) return "—";
+  return v.toFixed(dec === undefined ? METRICS[state.metric].dec : dec);
+}
+
+function labelOf(key, v) {
+  var f = FFMT[key];
+  return f ? f.prefix + v + f.suffix : String(v);
+}
+
+// A precomputed interval for the *current* metric, or null when it has none.
+function ciOf(r, metric) {
+  var m = METRICS[metric || state.metric];
+  if (!m.ciLower || !m.ciUpper) return null;
+  var lo = r[m.ciLower], hi = r[m.ciUpper];
+  if (lo === null || lo === undefined || hi === null || hi === undefined) return null;
+  return [lo, hi];
+}
+
+// The paired control value for the current metric, or null.
+function baselineOf(r, metric) {
+  var m = METRICS[metric || state.metric];
+  if (!m.baseline) return null;
+  var v = r[m.baseline];
+  return (v === null || v === undefined) ? null : v;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tooltip
+// ─────────────────────────────────────────────────────────────
+
+var tipEl = document.getElementById("tip");
+
+function showTip(evt, html) {
+  tipEl.innerHTML = html;
+  tipEl.classList.add("on");
+  moveTip(evt);
+}
+function moveTip(evt) {
+  var pad = 14, w = tipEl.offsetWidth, h = tipEl.offsetHeight;
+  var x = evt.clientX + pad, y = evt.clientY + pad;
+  if (x + w > window.innerWidth - 8) x = evt.clientX - w - pad;
+  if (y + h > window.innerHeight - 8) y = evt.clientY - h - pad;
+  tipEl.style.left = Math.max(8, x) + "px";
+  tipEl.style.top = Math.max(8, y) + "px";
+}
+function hideTip() { tipEl.classList.remove("on"); }
+
+function runTip(rows, titleHtml) {
+  var m = METRICS[state.metric];
+  var html = '<div class="tt-title">' + titleHtml + "</div>";
+  if (rows.length === 1) {
+    var r = rows[0];
+    FKEYS.forEach(function (k) {
+      html += '<div class="tt-row"><span>' + FLABEL[k] + "</span><b>" +
+              labelOf(k, r[k]) + "</b></div>";
+    });
+    html += '<div class="tt-sep"></div>';
+    html += '<div class="tt-row"><span>' + m.label + "</span><b>" + fmt(metricOf(r)) + "</b></div>";
+    var ci = ciOf(r);
+    if (ci) {
+      html += '<div class="tt-row"><span>95% CI</span><b>' +
+              fmt(ci[0]) + " – " + fmt(ci[1]) + "</b></div>";
+    }
+    var bl = baselineOf(r);
+    if (bl !== null) {
+      html += '<div class="tt-row"><span>shuffled baseline</span><b>' + fmt(bl) + "</b></div>";
+    }
+    EXTRA_COLUMNS.forEach(function (c) {
+      var v = r[c.key];
+      if (v === null || v === undefined) return;
+      if (m.baseline === c.key) return;   // already shown above
+      html += '<div class="tt-row"><span>' + c.label + "</span><b>" +
+              (typeof v === "number" && c.dec === null ? v.toLocaleString()
+                : typeof v === "number" ? v.toFixed(c.dec) : v) + "</b></div>";
+    });
+  } else {
+    var vals = rows.map(metricOf).filter(function (v) { return v !== null; });
+    var mean = vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+    html += '<div class="tt-row"><span>mean ' + m.label + "</span><b>" + fmt(mean) + "</b></div>";
+    html += '<div class="tt-row"><span>range</span><b>' +
+            fmt(Math.min.apply(null, vals)) + " – " + fmt(Math.max.apply(null, vals)) + "</b></div>";
+    html += '<div class="tt-row"><span>runs</span><b>' + rows.length + "</b></div>";
+    html += '<div class="tt-sep"></div>';
+    var collapsed = FKEYS.filter(function (k) {
+      return levelsOf(k, rows).length > 1;
+    });
+    html += '<div class="tt-row"><span>collapsed over</span><b>' +
+            (collapsed.map(function (k) { return FLABEL[k]; }).join(", ") || "—") + "</b></div>";
+  }
+  return html;
+}
+
+// ─────────────────────────────────────────────────────────────
+// SVG helpers
+// ─────────────────────────────────────────────────────────────
+
+var SVGNS = "http://www.w3.org/2000/svg";
+
+function el(name, attrs, parent) {
+  var n = document.createElementNS(SVGNS, name);
+  if (attrs) for (var k in attrs) if (attrs[k] !== null && attrs[k] !== undefined) n.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(n);
+  return n;
+}
+
+function niceTicks(lo, hi, count) {
+  if (lo === hi) { lo -= 0.5; hi += 0.5; }
+  var span = hi - lo;
+  var step = Math.pow(10, Math.floor(Math.log(span / count) / Math.LN10));
+  var err = span / count / step;
+  if (err >= 7.5) step *= 10; else if (err >= 3.5) step *= 5; else if (err >= 1.5) step *= 2;
+  var ticks = [], t = Math.ceil(lo / step) * step;
+  for (; t <= hi + step * 1e-6; t += step) ticks.push(Math.round(t / step) * step);
+  return ticks;
+}
+
+function tickFmt(v) {
+  var a = Math.abs(v);
+  if (a >= 1000) return (v / 1000).toFixed(a >= 10000 ? 0 : 1) + "k";
+  if (a >= 10) return v.toFixed(0);
+  if (a >= 1) return v.toFixed(1);
+  return v.toFixed(2);
+}
+
+// Usable width inside a chart card. Measured off `.wrap`, which is in the DOM
+// before anything is drawn -- `#view` is empty at that moment and reports the
+// pre-scrollbar width, which is 15-odd pixels too generous on the first render.
+function availableChartWidth() {
+  var wrap = document.querySelector(".wrap");
+  if (!wrap) return 1100;
+  var cs = getComputedStyle(wrap);
+  var inner = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+  var CARD_CHROME = 34;    // card padding + border
+  var SCROLLBAR = 16;      // may appear once the page grows past the viewport
+  return Math.floor(inner - CARD_CHROME - SCROLLBAR);
+}
+
+// ─────────────────────────────────────────────────────────────
+// PNG export
+// ─────────────────────────────────────────────────────────────
+//
+// The charts are inline SVG whose axis/label colours come from the stylesheet
+// (.tick, .gridline, .axlabel ...). Serializing the node alone throws all of
+// that away, so the clone gets every rendered style written onto it inline
+// before it is rasterized.
+
+// The hosted Artifact runs the page in a sandboxed iframe that blocks
+// page-initiated downloads. The local build is top-level, where saving works.
+var IN_FRAME = (function () {
+  try { return window.self !== window.top; } catch (e) { return true; }
+})();
+
+// When the page is served as a hosted Artifact the viewer can grant it a save
+// surface. Resolved once, and only when the host actually provides `claude.use`
+// -- the local file:// build has no such global and takes the paths below.
+var hostedSave = null;
+(function resolveHostedSave() {
+  if (typeof claude === "undefined" || !claude || typeof claude.use !== "function") return;
+  try {
+    Promise.resolve(claude.use("downloads")).then(
+      function (ns) { hostedSave = ns || null; },
+      function () { hostedSave = null; });
+  } catch (e) { hostedSave = null; }
+})();
+
+var COPIED_STYLES = [
+  "fill", "fill-opacity", "stroke", "stroke-width", "stroke-opacity",
+  "stroke-dasharray", "stroke-linecap", "stroke-linejoin", "opacity",
+  "font-size", "font-weight", "font-style", "letter-spacing",
+  "text-anchor", "dominant-baseline", "visibility"
+];
+
+// Remote webfonts do not load inside an SVG rasterized through Image(), so the
+// export would silently fall back anyway. Naming the fallback keeps it stable.
+var EXPORT_FONT = 'system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+
+function inlineStyles(source, clone) {
+  var cs = getComputedStyle(source);
+  var decl = "";
+  for (var i = 0; i < COPIED_STYLES.length; i++) {
+    var prop = COPIED_STYLES[i];
+    var value = cs.getPropertyValue(prop);
+    if (value) decl += prop + ":" + value + ";";
+  }
+  if (source.tagName === "text" || source.tagName === "tspan") {
+    decl += "font-family:" + EXPORT_FONT + ";";
+  }
+  clone.setAttribute("style", decl);
+
+  var sk = source.children, ck = clone.children;
+  for (var j = 0; j < sk.length; j++) inlineStyles(sk[j], ck[j]);
+}
+
+function svgToDataUrl(svg) {
+  var clone = svg.cloneNode(true);
+  clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  clone.setAttribute("xmlns:xlink", "http://www.w3.org/1999/xlink");
+  inlineStyles(svg, clone);
+
+  var xml = new XMLSerializer().serializeToString(clone);
+  // btoa is latin-1 only; the labels carry Å, ≤, ² and friends
+  return "data:image/svg+xml;base64," +
+         btoa(unescape(encodeURIComponent(xml)));
+}
+
+function svgToPngBlob(svg, scale) {
+  return new Promise(function (resolve, reject) {
+    var w = Math.ceil(+svg.getAttribute("width"));
+    var h = Math.ceil(+svg.getAttribute("height"));
+    var img = new Image();
+    img.onload = function () {
+      try {
+        var canvas = document.createElement("canvas");
+        canvas.width = Math.round(w * scale);
+        canvas.height = Math.round(h * scale);
+        var ctx = canvas.getContext("2d");
+        // opaque ground: a transparent PNG reads as broken on a white slide
+        ctx.fillStyle = cssvar("--surface") || "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          blob ? resolve(blob) : reject(new Error("the canvas produced no image"));
+        }, "image/png");
+      } catch (e) { reject(e); }
+    };
+    img.onerror = function () { reject(new Error("the chart could not be rasterized")); };
+    img.src = svgToDataUrl(svg);
+  });
+}
+
+// Series colours are baked into SVG attributes when the chart is drawn, so
+// exporting in a theme the page is not currently showing means redrawing under
+// that theme first. `fn` receives the freshly drawn SVG.
+function withTheme(theme, fn) {
+  var root = document.documentElement;
+  if (!theme || theme === "as-shown") return Promise.resolve(fn());
+
+  var had = root.hasAttribute("data-theme");
+  var prev = root.getAttribute("data-theme");
+  root.setAttribute("data-theme", theme);
+  render();
+  return Promise.resolve()
+    .then(function () { return fn(); })
+    .then(function (out) { restore(); return out; },
+          function (err) { restore(); throw err; });
+
+  function restore() {
+    if (had) root.setAttribute("data-theme", prev);
+    else root.removeAttribute("data-theme");
+    render();
+  }
+}
+
+function toast(html, ms) {
+  var el2 = document.getElementById("toast");
+  el2.innerHTML = html;
+  el2.classList.add("on");
+  clearTimeout(toast._t);
+  toast._t = setTimeout(function () { el2.classList.remove("on"); }, ms || 5000);
+}
+
+// Save-location picker where the browser has one (Chrome/Edge, including on
+// file://), a plain download everywhere else. The picker is opened *before*
+// rasterizing: it needs the click's user activation, which a later async step
+// may no longer carry.
+function savePng(getSvg, scale, filename, theme) {
+  // In the hosted viewer this is the only route that can actually write a file;
+  // the viewer confirms the name and may decline.
+  if (hostedSave) {
+    return renderToPng(getSvg, scale, theme).then(function (blob) {
+      return hostedSave.save({ filename: filename, data: blob });
+    }).then(function () {
+      toast("<b>Saved</b> " + escapeHtml(filename) + ".");
+    }, function (err) {
+      var code = err && err.code;
+      if (code === "declined") return;                 // viewer said no
+      if (code === "rate_limited") {
+        toast("<b>Another save is still open.</b> Finish it, then try again.");
+        return;
+      }
+      toast("<b>Export failed:</b> " + escapeHtml(String(err && err.message || err)) + ".");
+    });
+  }
+
+  var picker = window.showSaveFilePicker;
+  if (!picker) return rasterizeThenDownload(getSvg, scale, filename, theme);
+
+  var opts = {
+    suggestedName: filename,
+    types: [{ description: "PNG image", accept: { "image/png": [".png"] } }]
+  };
+  return picker.call(window, opts).then(function (handle) {
+    return renderToPng(getSvg, scale, theme).then(function (blob) {
+      return handle.createWritable().then(function (writer) {
+        return writer.write(blob).then(function () { return writer.close(); });
+      });
+    }).then(function () {
+      toast("<b>Saved</b> " + escapeHtml(handle.name) + ".");
+    });
+  }, function (err) {
+    if (err && err.name === "AbortError") return;                 // user cancelled
+    return rasterizeThenDownload(getSvg, scale, filename, theme);  // no picker
+  }).catch(function (err) {
+    toast("<b>Export failed:</b> " + escapeHtml(String(err && err.message || err)) + ".");
+  });
+}
+
+function renderToPng(getSvg, scale, theme) {
+  // withTheme redraws, so the SVG node has to be looked up after the redraw
+  return withTheme(theme, function () { return svgToPngBlob(getSvg(), scale); });
+}
+
+function rasterizeThenDownload(getSvg, scale, filename, theme) {
+  return renderToPng(getSvg, scale, theme).then(function (blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    toast(IN_FRAME
+      ? "<b>Download requested.</b> This hosted preview blocks page downloads &mdash; " +
+        "if nothing arrived, run <code>uv run python -m prob.explorer</code> and export " +
+        "from the local page."
+      : "<b>Saved</b> " + escapeHtml(filename) + " to your downloads folder.");
+  }).catch(function (err) {
+    toast("<b>Export failed:</b> " + escapeHtml(String(err && err.message || err)) + ".");
+  });
+}
+
+// A filename that says what the figure is: view, metric, and whatever is pinned.
+function exportName(view, parts) {
+  var pinned = FKEYS.filter(function (k) {
+    var on = ALL_LEVELS[k].filter(function (v) { return state.filter[k][String(v)]; });
+    return on.length === 1;
+  }).map(function (k) {
+    var on = ALL_LEVELS[k].filter(function (v) { return state.filter[k][String(v)]; });
+    return String(on[0]);
+  });
+  var bits = ["probe", view, state.metric].concat(parts || [], pinned);
+  return bits.filter(Boolean)
+             .join("_")
+             .replace(/[^A-Za-z0-9_.-]+/g, "-")
+             .slice(0, 120) + ".png";
+}
+
+function attachExport(c, view, parts) {
+  var tools = c.tools;
+  if (!tools) return;
+
+  // looked up at click time: exporting in another theme redraws the chart, so
+  // any node captured now would be stale by the time it is rasterized
+  function getSvg() { return c.querySelector("svg"); }
+
+  var themeSel = document.createElement("select");
+  themeSel.setAttribute("aria-label", "PNG theme");
+  [["as-shown", "As shown"], ["light", "Light"], ["dark", "Dark"]].forEach(function (p) {
+    var o = document.createElement("option");
+    o.value = p[0]; o.textContent = p[1];
+    if (p[0] === state.pngTheme) o.selected = true;
+    themeSel.appendChild(o);
+  });
+  themeSel.addEventListener("change", function () { state.pngTheme = themeSel.value; });
+
+  var scaleSel = document.createElement("select");
+  scaleSel.setAttribute("aria-label", "PNG resolution");
+  [1, 2, 3, 4].forEach(function (x) {
+    var o = document.createElement("option");
+    o.value = String(x);
+    o.textContent = x + "×";
+    if (x === state.pngScale) o.selected = true;
+    scaleSel.appendChild(o);
+  });
+  scaleSel.addEventListener("change", function () { state.pngScale = +scaleSel.value; });
+
+  var btn = document.createElement("button");
+  btn.className = "btn";
+  btn.type = "button";
+  btn.textContent = "Save PNG";
+  btn.title = "Export this chart as a PNG" +
+              (window.showSaveFilePicker ? " (choose where to save)"
+                                         : " (goes to your downloads folder)");
+  btn.addEventListener("click", function () {
+    btn.disabled = true;
+    var scale = +scaleSel.value, theme = themeSel.value;
+    var name = exportName(view, parts);
+    var done = function () {
+      // the button belongs to the pre-redraw DOM if the theme changed
+      var live = document.body.contains(btn);
+      if (live) btn.disabled = false;
+    };
+    Promise.resolve(savePng(getSvg, scale, name, theme)).then(done, done);
+  });
+
+  tools.appendChild(themeSel);
+  tools.appendChild(scaleSel);
+  tools.appendChild(btn);
+}
+
+function hookTip(node, htmlFn) {
+  node.addEventListener("mouseenter", function (e) { showTip(e, htmlFn()); });
+  node.addEventListener("mousemove", moveTip);
+  node.addEventListener("mouseleave", hideTip);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Controls
+// ─────────────────────────────────────────────────────────────
+
+function makeSelect(label, value, options, onChange) {
+  var field = document.createElement("div");
+  field.className = "field";
+  var lab = document.createElement("label");
+  lab.textContent = label;
+  var id = "sel-" + Math.random().toString(36).slice(2, 8);
+  lab.setAttribute("for", id);
+  var sel = document.createElement("select");
+  sel.id = id;
+  options.forEach(function (o) {
+    var opt = document.createElement("option");
+    opt.value = o.value; opt.textContent = o.label;
+    if (o.value === value) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.addEventListener("change", function () { onChange(sel.value); });
+  field.appendChild(lab); field.appendChild(sel);
+  return field;
+}
+
+function makeMulti(key) {
+  var levels = ALL_LEVELS[key];
+  var field = document.createElement("div");
+  field.className = "field";
+
+  var lab = document.createElement("span");
+  lab.className = "field-label";
+  lab.textContent = FLABEL[key];
+
+  var dd = document.createElement("div");
+  dd.className = "dd";
+
+  var btn = document.createElement("button");
+  btn.className = "dd-toggle";
+  btn.type = "button";
+  btn.setAttribute("aria-haspopup", "true");
+  btn.setAttribute("aria-expanded", "false");
+
+  var menu = document.createElement("div");
+  menu.className = "dd-menu";
+  menu.setAttribute("role", "group");
+  menu.setAttribute("aria-label", FLABEL[key] + " filter");
+
+  // counts under the *other* filters, so the menu shows what is reachable
+  var others = filtered.length; // placeholder to keep linters quiet
+  var reach = RUNS.filter(function (r) {
+    for (var i = 0; i < FKEYS.length; i++) {
+      var k = FKEYS[i];
+      if (k === key) continue;
+      if (r[k] === null || !state.filter[k][String(r[k])]) return false;
+    }
+    return true;
+  });
+  var counts = {};
+  reach.forEach(function (r) {
+    var v = String(r[key]);
+    counts[v] = (counts[v] || 0) + 1;
+  });
+
+  levels.forEach(function (v) {
+    var k = String(v);
+    var row = document.createElement("label");
+    row.className = "opt";
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!state.filter[key][k];
+    cb.addEventListener("change", function () {
+      state.filter[key][k] = cb.checked;
+      render();
+    });
+    var txt = document.createElement("span");
+    txt.textContent = labelOf(key, v);
+    var n = document.createElement("span");
+    n.className = "n";
+    n.textContent = counts[k] || 0;
+    row.appendChild(cb); row.appendChild(txt); row.appendChild(n);
+    menu.appendChild(row);
+  });
+
+  var actions = document.createElement("div");
+  actions.className = "dd-actions";
+  [["All", true], ["None", false]].forEach(function (pair) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = pair[0];
+    b.addEventListener("click", function () {
+      levels.forEach(function (v) { state.filter[key][String(v)] = pair[1]; });
+      render();
+    });
+    actions.appendChild(b);
+  });
+  menu.appendChild(actions);
+
+  var on = levels.filter(function (v) { return state.filter[key][String(v)]; });
+  var summary = on.length === levels.length ? "All"
+              : on.length === 0 ? "None"
+              : on.length === 1 ? labelOf(key, on[0])
+              : on.length + " selected";
+  btn.innerHTML = "";
+  var stxt = document.createElement("span");
+  stxt.textContent = summary;
+  var cnt = document.createElement("span");
+  cnt.className = "count";
+  cnt.textContent = on.length + "/" + levels.length;
+  var caret = document.createElement("span");
+  caret.className = "caret";
+  caret.textContent = "▾";
+  btn.appendChild(stxt); btn.appendChild(cnt); btn.appendChild(caret);
+
+  btn.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var wasOpen = dd.classList.contains("open");
+    closeAllDD();
+    if (!wasOpen) { dd.classList.add("open"); btn.setAttribute("aria-expanded", "true"); }
+  });
+  menu.addEventListener("click", function (e) { e.stopPropagation(); });
+
+  dd.appendChild(btn); dd.appendChild(menu);
+  field.appendChild(lab); field.appendChild(dd);
+  return field;
+}
+
+function closeAllDD() {
+  Array.prototype.forEach.call(document.querySelectorAll(".dd.open"), function (d) {
+    d.classList.remove("open");
+    var t = d.querySelector(".dd-toggle");
+    if (t) t.setAttribute("aria-expanded", "false");
+  });
+}
+document.addEventListener("click", closeAllDD);
+document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeAllDD(); });
+
+function renderControls() {
+  var host = document.getElementById("controls");
+  host.innerHTML = "";
+
+  host.appendChild(makeSelect("Metric", state.metric,
+    METRIC_ORDER.map(function (k) { return { value: k, label: METRICS[k].label }; }),
+    function (v) { state.metric = v; if (state.sortKey in METRICS) state.sortKey = v; render(); }));
+
+  FKEYS.forEach(function (k) { host.appendChild(makeMulti(k)); });
+
+  var resetField = document.createElement("div");
+  resetField.className = "field";
+  var sp = document.createElement("span");
+  sp.className = "field-label";
+  sp.innerHTML = "&nbsp;";
+  var reset = document.createElement("button");
+  reset.className = "btn";
+  reset.type = "button";
+  reset.textContent = "Select all runs";
+  reset.addEventListener("click", function () {
+    FKEYS.forEach(function (k) {
+      ALL_LEVELS[k].forEach(function (v) { state.filter[k][String(v)] = true; });
+    });
+    render();
+  });
+  resetField.appendChild(sp); resetField.appendChild(reset);
+  host.appendChild(resetField);
+}
+
+// ─────────────────────────────────────────────────────────────
+// Stat strip
+// ─────────────────────────────────────────────────────────────
+
+function renderStats(rows) {
+  var host = document.getElementById("stats");
+  host.innerHTML = "";
+  var m = METRICS[state.metric];
+  var vals = rows.map(metricOf).filter(function (v) { return v !== null; });
+
+  var best = null, worst = null;
+  if (vals.length) {
+    var sorted = rows.filter(function (r) { return metricOf(r) !== null; })
+                     .slice().sort(function (a, b) { return metricOf(a) - metricOf(b); });
+    best = m.higherBetter ? sorted[sorted.length - 1] : sorted[0];
+    worst = m.higherBetter ? sorted[0] : sorted[sorted.length - 1];
+  }
+
+  function describe(r) {
+    if (!r) return "—";
+    // the factors that actually vary in view -- pinned ones carry no information
+    var varying = FKEYS.filter(function (k) { return levelsOf(k, rows).length > 1; });
+    return (varying.length ? varying : FKEYS).slice(0, 4)
+      .map(function (k) { return labelOf(k, r[k]); }).join(" · ");
+  }
+
+  var cells = [
+    { k: "Runs in view", v: rows.length, s: "of " + RUNS.length },
+    { k: "Median " + m.label, v: vals.length ? fmt(median(vals)) : "—", s: "" },
+    { k: "Best " + m.label, v: best ? fmt(metricOf(best)) : "—", s: describe(best) },
+    { k: "Weakest " + m.label, v: worst ? fmt(metricOf(worst)) : "—", s: describe(worst) },
+    { k: "CI clears baseline", v: aboveBaseline(rows),
+      s: "of " + rows.filter(function (r) { return baselineOf(r) !== null; }).length + " paired" }
+  ];
+
+  cells.forEach(function (c) {
+    var d = document.createElement("div");
+    d.className = "stat";
+    d.innerHTML = '<div class="k">' + c.k + '</div><div class="v">' + c.v +
+                  (c.s ? '<small>' + escapeHtml(c.s) + "</small>" : "") + "</div>";
+    host.appendChild(d);
+  });
+}
+
+function median(a) {
+  var s = a.slice().sort(function (x, y) { return x - y; });
+  var h = Math.floor(s.length / 2);
+  return s.length % 2 ? s[h] : (s[h - 1] + s[h]) / 2;
+}
+
+// A run only beats its control when the whole interval sits clear of it.
+function aboveBaseline(rows) {
+  return rows.filter(function (r) {
+    var bl = baselineOf(r), ci = ciOf(r);
+    return bl !== null && ci !== null && ci[0] > bl;
+  }).length;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Tabs
+// ─────────────────────────────────────────────────────────────
+
+var VIEWS = [
+  { key: "curves", label: "Depth curves" },
+  { key: "matrix", label: "Coverage matrix" },
+  { key: "rank",   label: "Ranked intervals" },
+  { key: "table",  label: "Table" }
+];
+
+function renderTabs() {
+  var host = document.getElementById("tabs");
+  host.innerHTML = "";
+  VIEWS.forEach(function (v) {
+    var b = document.createElement("button");
+    b.className = "tab";
+    b.type = "button";
+    b.setAttribute("role", "tab");
+    b.setAttribute("aria-selected", state.view === v.key ? "true" : "false");
+    b.textContent = v.label;
+    b.addEventListener("click", function () { state.view = v.key; render(); });
+    host.appendChild(b);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shared card scaffolding
+// ─────────────────────────────────────────────────────────────
+
+function card(title, sub) {
+  var c = document.createElement("div");
+  c.className = "panel chartcard";
+
+  var head = document.createElement("div");
+  head.className = "cardhead";
+  var left = document.createElement("div");
+  var h = document.createElement("h2");
+  h.textContent = title;
+  var p = document.createElement("p");
+  p.className = "sub";
+  p.innerHTML = sub;
+  left.appendChild(h); left.appendChild(p);
+
+  // right-hand slot for per-chart actions (PNG export); filled by attachExport
+  var tools = document.createElement("div");
+  tools.className = "cardtools";
+
+  head.appendChild(left); head.appendChild(tools);
+  c.appendChild(head);
+  c.tools = tools;
+  return c;
+}
+
+// The standing explanation for a view: collapsed, so the chart leads.
+function howto(parts) {
+  var d = document.createElement("details");
+  d.className = "howto";
+  var sum = document.createElement("summary");
+  sum.textContent = "How to read this";
+  var body = document.createElement("div");
+  body.className = "body";
+  parts.forEach(function (html) {
+    var row = document.createElement("div");
+    row.innerHTML = html;
+    body.appendChild(row);
+  });
+  d.appendChild(sum); d.appendChild(body);
+  return d;
+}
+
+function notice(text, warn) {
+  var d = document.createElement("div");
+  d.className = "notice" + (warn ? " warn" : "");
+  d.innerHTML = '<span class="marker">' + (warn ? "CHECK" : "NOTE") + "</span><span>" + text + "</span>";
+  return d;
+}
+
+function legendFor(key, levels, kind) {
+  var wrap = document.createElement("div");
+  wrap.className = "legend";
+  var lab = document.createElement("span");
+  lab.className = "item";
+  lab.innerHTML = "<b style='color:var(--ink)'>" + FLABEL[key] + "</b>";
+  wrap.appendChild(lab);
+  levels.forEach(function (v, i) {
+    var it = document.createElement("span");
+    it.className = "item";
+    var sw = document.createElement("span");
+    sw.className = kind === "line" ? "line" : "swatch";
+    sw.style.background = "var(" + SERIES[i % SERIES.length] + ")";
+    var t = document.createElement("span");
+    t.textContent = labelOf(key, v);
+    it.appendChild(sw); it.appendChild(t);
+    wrap.appendChild(it);
+  });
+  return wrap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Free factors: the axes nobody assigned
+// ─────────────────────────────────────────────────────────────
+//
+// A factor that is not on the x axis, not the colour, not a facet, and not
+// filtered down to one level still has several levels in view -- so several
+// runs land on the same mark. Averaging them is almost never what was meant
+// (an R² for molecular weight has no business being averaged with one for
+// affinity), so the page names them and asks.
+
+var AGG_MODES = [
+  { value: "split",  label: "Split — one line per run" },
+  { value: "mean",   label: "Mean (flagged)" },
+  { value: "median", label: "Median (flagged)" },
+  { value: "break",  label: "Break — flag, never average" }
+];
+
+var COMBO_SEP = "\u241f";
+
+function freeFactors(rows, assigned) {
+  return FKEYS.filter(function (k) {
+    return assigned.indexOf(k) === -1 && levelsOf(k, rows).length > 1;
+  }).map(function (k) {
+    return { key: k, n: levelsOf(k, rows).length };
+  });
+}
+
+function comboKey(r, keys) {
+  return keys.map(function (k) { return String(r[k]); }).join(COMBO_SEP);
+}
+
+function aggregateValue(vals, mode) {
+  if (vals.length === 1) return vals[0];
+  if (mode === "median") return median(vals);
+  return vals.reduce(function (a, b) { return a + b; }, 0) / vals.length;
+}
+
+// Reduce a factor to a single level, so it stops colliding on every mark.
+function keepFirstLevel(key, rows) {
+  var lv = levelsOf(key, rows);
+  if (!lv.length) return;
+  ALL_LEVELS[key].forEach(function (v) { state.filter[key][String(v)] = false; });
+  state.filter[key][String(lv[0])] = true;
+  render();
+}
+
+function starPoints(cx, cy, r) {
+  var out = [];
+  for (var i = 0; i < 10; i++) {
+    var ang = -Math.PI / 2 + i * Math.PI / 5;
+    var rad = (i % 2) ? r * 0.44 : r;
+    out.push((cx + rad * Math.cos(ang)).toFixed(2) + "," +
+             (cy + rad * Math.sin(ang)).toFixed(2));
+  }
+  return out.join(" ");
+}
+
+// The collision mark. Red, star-shaped and titled -- never colour alone.
+function drawStar(g, cx, cy, n, r) {
+  var star = el("polygon", {
+    points: starPoints(cx, cy, r || 6.5),
+    fill: cssvar("--critical"), stroke: cssvar("--surface"), "stroke-width": 1.2
+  }, g);
+  el("title", {}, star).textContent = n + " runs on this mark";
+  return star;
+}
+
+// Names each unassigned factor and offers the ways out, so the choice is the
+// reader's rather than a silent mean.
+function conflictBanner(free, buttons) {
+  var d = document.createElement("div");
+  d.className = "notice choose";
+
+  var marker = document.createElement("span");
+  marker.className = "marker";
+  marker.textContent = "CHOOSE";
+
+  var body = document.createElement("span");
+  var per = free.reduce(function (a, f) { return a * f.n; }, 1);
+  var head = document.createElement("div");
+  head.innerHTML = free.map(function (f) {
+    return "<b>" + escapeHtml(FLABEL[f.key]) + "</b> has " + f.n + " levels in view and no axis";
+  }).join("; ") + " &mdash; up to " + per +
+    " runs land on the same mark, flagged with a red star ★.";
+  body.appendChild(head);
+
+  var acts = document.createElement("div");
+  acts.className = "acts";
+  buttons.forEach(function (b) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = b.label;
+    btn.addEventListener("click", b.onClick);
+    acts.appendChild(btn);
+  });
+  body.appendChild(acts);
+
+  d.appendChild(marker); d.appendChild(body);
+  return d;
+}
+
+function crossTargetWarning(rows) {
+  var m = METRICS[state.metric];
+  if (m.crossTarget) return null;
+  var t = levelsOf("target", rows);
+  if (t.length < 2) return null;
+  return notice(
+    "<b>" + m.label + " is not comparable across targets.</b> " + t.length +
+    " targets are in view and each carries its own units. Filter to one target, or switch to R² / ΔR².",
+    true);
+}
+
+function seriesCapWarning(levels) {
+  if (levels.length <= SERIES.length) return null;
+  return notice("Only the first " + SERIES.length + " levels get a distinct colour. " +
+    "Narrow the filter so each series stays identifiable.", true);
+}
+
+// ─────────────────────────────────────────────────────────────
+// View: depth curves
+// ─────────────────────────────────────────────────────────────
+
+function viewCurves(rows) {
+  var host = document.createElement("div");
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.gap = "14px";
+
+  var nonX = FACTORS.filter(function (f) { return f.key !== XKEY; })
+                    .map(function (f) { return { value: f.key, label: f.label }; });
+  var facetChoices = [{ value: "", label: "None" }].concat(nonX);
+
+  var rKey = state.curveFacetRow, cKey = state.curveFacetCol;
+  var twoD = !!rKey && !!cKey;
+  var oneFacet = (!!rKey) !== (!!cKey);
+
+  var opts = document.createElement("div");
+  opts.className = "panel controls";
+
+  opts.appendChild(makeSelect("Colour by", state.curveSeries, nonX,
+    function (v) { state.curveSeries = v; render(); }));
+
+  // Picking a factor the other facet already holds swaps the two, rather than
+  // putting the same factor on both axes and blanking every off-diagonal cell.
+  opts.appendChild(makeSelect("Panel rows per", rKey, facetChoices, function (v) {
+    if (v && v === state.curveFacetCol) state.curveFacetCol = state.curveFacetRow;
+    state.curveFacetRow = v; render();
+  }));
+  opts.appendChild(makeSelect("Panel columns per", cKey, facetChoices, function (v) {
+    if (v && v === state.curveFacetRow) state.curveFacetRow = state.curveFacetCol;
+    state.curveFacetCol = v; render();
+  }));
+
+  // Wrapping is only a choice with a single facet: a 2-D grid takes its column
+  // count from the column factor, and one panel has nothing to wrap.
+  var wrapField = makeSelect("Panels per row", String(state.curveWrap),
+    [{ value: "auto", label: "Auto" }, { value: "1", label: "1" },
+     { value: "2", label: "2" }, { value: "3", label: "3" }, { value: "4", label: "4" }],
+    function (v) { state.curveWrap = (v === "auto" ? "auto" : +v); render(); });
+  var wrapSel = wrapField.querySelector("select");
+  if (!oneFacet) {
+    wrapSel.disabled = true;
+    wrapSel.title = twoD ? "The column factor sets the number of columns"
+                         : "Set a row or column factor first";
+  }
+  opts.appendChild(wrapField);
+
+  // Per-row is what makes a 2-D grid readable: shared lets the widest-ranging
+  // row flatten all the others, per-panel makes columns within a row
+  // incomparable. Only offered when there is a row to be "per".
+  var scaleChoices = [{ value: "free", label: "Per panel" }];
+  if (rKey) scaleChoices.push({ value: "row", label: "Per row" });
+  scaleChoices.push({ value: "shared", label: "Shared" });
+  var scaleMode = (state.curveScale === "row" && !rKey) ? "free" : state.curveScale;
+  opts.appendChild(makeSelect("Y scale", scaleMode, scaleChoices,
+    function (v) { state.curveScale = v; render(); }));
+
+  opts.appendChild(makeSelect("Runs on one mark", state.aggregate, AGG_MODES,
+    function (v) { state.aggregate = v; render(); }));
+
+  host.appendChild(opts);
+
+  var c = card("Probe performance across layers",
+    "Rising = the network builds the property. Flat = it was already in the input features.");
+
+  if (!rows.length) {
+    c.appendChild(emptyBox());
+    host.appendChild(c);
+    return host;
+  }
+
+  var w = crossTargetWarning(rows);
+  if (w) c.appendChild(w);
+
+  var sKey = state.curveSeries;
+  var sLevels = levelsOf(sKey, rows);
+  var cap = seriesCapWarning(sLevels);
+  if (cap) c.appendChild(cap);
+
+  var aggMode = state.aggregate;
+  var free = freeFactors(rows, [XKEY, sKey, rKey, cKey].filter(Boolean));
+  var freeKeys = free.map(function (f) { return f.key; });
+
+  if (free.length) {
+    // Putting a factor on a facet axis must not strand whatever was there: if
+    // the other axis is free, the displaced factor moves onto it. Otherwise it
+    // becomes free and the banner simply reports it next render.
+    var assignFacet = function (slot, key) {
+      var mine = slot === "row" ? "curveFacetRow" : "curveFacetCol";
+      var other = slot === "row" ? "curveFacetCol" : "curveFacetRow";
+      var displaced = state[mine];
+      if (state[other] === key) state[other] = "";
+      state[mine] = key;
+      if (displaced && displaced !== key && !state[other]) state[other] = displaced;
+      render();
+    };
+
+    var buttons = [];
+    free.forEach(function (f) {
+      buttons.push({ label: "Rows per " + FLABEL[f.key],
+                     onClick: function () { assignFacet("row", f.key); } });
+      buttons.push({ label: "Columns per " + FLABEL[f.key],
+                     onClick: function () { assignFacet("col", f.key); } });
+      buttons.push({ label: "Colour by " + FLABEL[f.key], onClick: function () {
+        state.curveSeries = f.key; render();
+      }});
+      buttons.push({ label: "Keep one " + FLABEL[f.key], onClick: function () {
+        keepFirstLevel(f.key, rows);
+      }});
+    });
+    if (aggMode !== "mean") {
+      buttons.push({ label: "Average them", onClick: function () {
+        state.aggregate = "mean"; render();
+      }});
+    }
+    c.appendChild(conflictBanner(free, buttons));
+  }
+
+  var rLevels = rKey ? levelsOf(rKey, rows) : [null];
+  var cLevels = cKey ? levelsOf(cKey, rows) : [null];
+
+  // One flat list of panels plus its grid shape, so the three layout modes
+  // (2-D grid / wrapped single facet / one panel) share the drawing code.
+  var cells = [], nRows, nCols;
+  if (twoD) {
+    nRows = rLevels.length; nCols = cLevels.length;
+    rLevels.forEach(function (rv, i) {
+      cLevels.forEach(function (cv, j) { cells.push({ rv: rv, cv: cv, i: i, j: j }); });
+    });
+  } else {
+    var levels = rKey ? rLevels : cLevels;
+    var pending = levels.map(function (v) {
+      return rKey ? { rv: v, cv: null } : { rv: null, cv: v };
+    });
+    var n = pending.length;
+    var wanted = state.curveWrap === "auto"
+      ? (n === 1 ? 1 : (n <= 4 ? 2 : 3))
+      : Math.max(1, Math.min(4, +state.curveWrap));
+    nCols = Math.min(wanted, n);
+    pending.forEach(function (p, k) {
+      cells.push({ rv: p.rv, cv: p.cv, i: Math.floor(k / nCols), j: k % nCols });
+    });
+    nRows = Math.ceil(n / nCols);
+  }
+
+  var layers = levelsOf(XKEY, rows);
+  var m = METRICS[state.metric];
+
+  var allVals = rows.map(metricOf).filter(function (v) { return v !== null; });
+  var globalDom = padDomain(Math.min.apply(null, allVals), Math.max.apply(null, allVals), m);
+
+  var rowDom = {};
+  if (scaleMode === "row" && rKey) {
+    rLevels.forEach(function (rv) {
+      var vals = rows.filter(function (r) { return String(r[rKey]) === String(rv); })
+                     .map(metricOf).filter(function (v) { return v !== null; });
+      if (vals.length) {
+        rowDom[String(rv)] = padDomain(Math.min.apply(null, vals),
+                                       Math.max.apply(null, vals), m);
+      }
+    });
+  }
+
+  // right margin leaves room for the direct end-labels
+  var M = { t: twoD ? 12 : 26, r: sLevels.length <= 4 ? 66 : 16, b: 40, l: 54 };
+  var GUT = twoD ? 34 : 0;   // rotated row headers
+  var TOP = twoD ? 28 : 0;   // one column header band
+
+  var MIN_PW = 210;
+  var avail = Math.max(320, availableChartWidth());
+  var inner = Math.max(240, avail - GUT);
+
+  var askedCols = nCols;
+  if (!twoD) {
+    // Below the minimum panel width, drop a column rather than shrink panels
+    // into unreadability. A 2-D grid cannot: its columns are the factor.
+    nCols = Math.max(1, Math.min(nCols, Math.floor(inner / (MIN_PW + M.l + M.r))));
+    nRows = Math.ceil(cells.length / nCols);
+    cells.forEach(function (cell, k) { cell.i = Math.floor(k / nCols); cell.j = k % nCols; });
+  }
+  var colsReduced = !twoD && state.curveWrap !== "auto" && nCols < askedCols;
+
+  var single = cells.length === 1;
+  // Cap panel width so a 2-column grid does not leave half the card empty, but
+  // keep wide grids from stretching past what a curve needs to be readable.
+  var maxPW = single ? 680 : (nCols <= 2 ? 520 : 380);
+  var PW = Math.max(MIN_PW, Math.min(maxPW,
+                                     Math.floor(inner / nCols) - M.l - M.r));
+  var PH = single ? 350 : Math.max(170, Math.round(PW * (twoD ? 0.58 : 0.66)));
+  var W = GUT + nCols * (PW + M.l + M.r);
+  var H = TOP + nRows * (PH + M.t + M.b);
+
+  var scroll = document.createElement("div");
+  scroll.className = "scroller";
+  var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H,
+                        role: "img",
+                        "aria-label": m.label + " by " + FLABEL[XKEY] +
+                          ", coloured by " + FLABEL[sKey] +
+                          (rKey ? ", rows " + FLABEL[rKey] : "") +
+                          (cKey ? ", columns " + FLABEL[cKey] : "") });
+
+  // Grid headers: once per column and once per row, the anatomy plot_run_grid
+  // uses, so a screenshot and the matplotlib figure read the same way.
+  if (twoD) {
+    cLevels.forEach(function (cv, j) {
+      el("text", { x: GUT + j * (PW + M.l + M.r) + M.l + PW / 2, y: 18,
+                   "text-anchor": "middle", class: "facet-title" }, svg)
+        .textContent = FLABEL[cKey] + " = " + labelOf(cKey, cv);
+    });
+    rLevels.forEach(function (rv, i) {
+      var cy = TOP + i * (PH + M.t + M.b) + M.t + PH / 2;
+      el("text", { x: 14, y: cy, "text-anchor": "middle", class: "facet-title",
+                   transform: "rotate(-90,14," + cy + ")" }, svg)
+        .textContent = FLABEL[rKey] + " = " + labelOf(rKey, rv);
+    });
+  }
+
+  cells.forEach(function (cell) {
+    var fr = rows.filter(function (r) {
+      return (cell.rv === null || String(r[rKey]) === String(cell.rv)) &&
+             (cell.cv === null || String(r[cKey]) === String(cell.cv));
+    });
+    var gx = GUT + cell.j * (PW + M.l + M.r) + M.l;
+    var gy = TOP + cell.i * (PH + M.t + M.b) + M.t;
+    var g = el("g", { transform: "translate(" + gx + "," + gy + ")" }, svg);
+
+    var fvals = fr.map(metricOf).filter(function (v) { return v !== null; });
+
+    // An empty combination is information in a 10%-populated sweep: say "no
+    // run" rather than leaving a hole the reader has to interpret.
+    if (!fvals.length) {
+      el("rect", { x: 0, y: 0, width: PW, height: PH, rx: 4, fill: "none",
+                   stroke: cssvar("--grid"), "stroke-width": 1,
+                   "stroke-dasharray": "3 3" }, g);
+      el("text", { x: PW / 2, y: PH / 2 + 4, "text-anchor": "middle",
+                   class: "tick" }, g).textContent = "no run";
+      if (!twoD) drawPanelTitle(g, cell);
+      return;
+    }
+
+    var dom = scaleMode === "shared" ? globalDom
+            : (scaleMode === "row" && rowDom[String(cell.rv)]) ? rowDom[String(cell.rv)]
+            : padDomain(Math.min.apply(null, fvals), Math.max.apply(null, fvals), m);
+
+    var xs = {}, xstep = layers.length > 1 ? PW / (layers.length - 1) : 0;
+    layers.forEach(function (L, i) { xs[String(L)] = layers.length > 1 ? i * xstep : PW / 2; });
+    function ys(v) { return PH - (v - dom[0]) / (dom[1] - dom[0]) * PH; }
+
+    // grid + axes
+    niceTicks(dom[0], dom[1], 5).forEach(function (t) {
+      if (t < dom[0] || t > dom[1]) return;
+      el("line", { x1: 0, y1: ys(t), x2: PW, y2: ys(t), class: "gridline" }, g);
+      el("text", { x: -8, y: ys(t) + 4, "text-anchor": "end", class: "tick" }, g).textContent = tickFmt(t);
+    });
+    if (dom[0] < 0 && dom[1] > 0) {
+      el("line", { x1: 0, y1: ys(0), x2: PW, y2: ys(0), class: "zeroline" }, g);
+    }
+    el("line", { x1: 0, y1: PH, x2: PW, y2: PH, class: "axisline" }, g);
+    layers.forEach(function (L) {
+      el("text", { x: xs[String(L)], y: PH + 18, "text-anchor": "middle", class: "tick" }, g)
+        .textContent = labelOf(XKEY, L);
+    });
+    el("text", { x: PW / 2, y: PH + 34, "text-anchor": "middle", class: "axlabel" }, g)
+      .textContent = FLABEL[XKEY].toLowerCase();
+    el("text", { x: -M.l + 12, y: PH / 2, "text-anchor": "middle", class: "axlabel",
+                 transform: "rotate(-90," + (-M.l + 12) + "," + (PH / 2) + ")" }, g)
+      .textContent = m.label;
+    if (!twoD) drawPanelTitle(g, cell);
+
+    // Split mode draws one line per free-factor combination, so nothing is
+    // averaged; the other modes collapse and flag. Count the lines first --
+    // CI bands are only legible on a handful.
+    var seriesLines = sLevels.map(function (sv) {
+      var srows = fr.filter(function (r) { return String(r[sKey]) === String(sv); });
+      if (aggMode !== "split" || !freeKeys.length) return srows.length ? [srows] : [];
+      var byCombo = {}, order = [];
+      srows.forEach(function (r) {
+        var k = comboKey(r, freeKeys);
+        if (!byCombo[k]) { byCombo[k] = []; order.push(k); }
+        byCombo[k].push(r);
+      });
+      return order.map(function (k) { return byCombo[k]; });
+    });
+    var lineCount = seriesLines.reduce(function (a, ls) { return a + ls.length; }, 0);
+    var showBands = lineCount <= 6;
+
+    var endLabels = [];
+    sLevels.forEach(function (sv, si) {
+      var colour = cssvar(SERIES[si % SERIES.length]);
+      var lines = seriesLines[si];
+      if (!lines.length) return;
+      var thin = lines.length > 1;
+      var lastYs = [];
+
+      lines.forEach(function (crows) {
+        var pts = [];
+        layers.forEach(function (L) {
+          var group = crows.filter(function (r) { return String(r[XKEY]) === String(L); });
+          var vals = group.map(metricOf).filter(function (v) { return v !== null; });
+          if (!vals.length) return;
+          var collapsed = vals.length > 1;
+          // Break refuses to invent a value where runs collide; the others
+          // aggregate but keep the mark flagged.
+          var v = (collapsed && aggMode === "break") ? null : aggregateValue(vals, aggMode);
+          pts.push({ L: L, v: v, rows: group, collapsed: collapsed });
+        });
+        if (!pts.length) return;
+
+        var drawable = pts.filter(function (p) { return p.v !== null; });
+        if (!drawable.length) {
+          // every point on this line is a collision: mark them and move on
+          pts.forEach(function (p) {
+            var star = drawStar(g, xs[String(p.L)], PH / 2, p.rows.length);
+            hookTip(star, function () {
+              return runTip(p.rows, escapeHtml(labelOf(sKey, sv)) + " · " +
+                escapeHtml(labelOf(XKEY, p.L)) + facetSuffix(cell));
+            });
+          });
+          return;
+        }
+
+        // CI band only where every point is a single run that has an interval --
+        // a band drawn over a collapsed mean would be inventing precision.
+        if (showBands && pts.every(function (p) {
+              return p.rows.length === 1 && ciOf(p.rows[0]); })) {
+          var up = pts.map(function (p) {
+            return xs[String(p.L)] + "," + ys(clamp(ciOf(p.rows[0])[1], dom)); });
+          var dn = pts.slice().reverse().map(function (p) {
+            return xs[String(p.L)] + "," + ys(clamp(ciOf(p.rows[0])[0], dom)); });
+          el("polygon", { points: up.concat(dn).join(" "), fill: colour, opacity: 0.13 }, g);
+        }
+
+        // a broken point splits the line rather than bridging over it
+        var segment = [];
+        function flush() {
+          if (segment.length > 1) {
+            el("polyline", { points: segment.join(" "), fill: "none", stroke: colour,
+                             "stroke-width": thin ? 1.4 : 2, opacity: thin ? 0.62 : 1,
+                             "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+          }
+          segment = [];
+        }
+        pts.forEach(function (p) {
+          if (p.v === null) { flush(); return; }
+          segment.push(xs[String(p.L)] + "," + ys(p.v));
+        });
+        flush();
+
+        pts.forEach(function (p) {
+          var cx = xs[String(p.L)], cy = p.v === null ? PH / 2 : ys(p.v);
+          var mark;
+          if (p.collapsed) {
+            mark = drawStar(g, cx, cy, p.rows.length);
+          } else {
+            el("circle", { cx: cx, cy: cy, r: thin ? 3.2 : 4.5, fill: colour,
+                           stroke: cssvar("--surface"), "stroke-width": thin ? 1.2 : 2,
+                           opacity: thin ? 0.85 : 1 }, g);
+            mark = el("circle", { cx: cx, cy: cy, r: 11, fill: "transparent",
+                                  style: "cursor:pointer" }, g);
+          }
+          hookTip(mark, function () {
+            return runTip(p.rows, escapeHtml(labelOf(sKey, sv)) + " · " +
+              escapeHtml(labelOf(XKEY, p.L)) + facetSuffix(cell));
+          });
+        });
+
+        var last = drawable[drawable.length - 1];
+        lastYs.push({ x: xs[String(last.L)], y: ys(last.v) });
+      });
+
+      // one direct label per colour, however many lines it drew
+      if (sLevels.length <= 4 && lastYs.length) {
+        var mx = Math.max.apply(null, lastYs.map(function (p) { return p.x; }));
+        var my = lastYs.reduce(function (a, p) { return a + p.y; }, 0) / lastYs.length;
+        endLabels.push({ x: mx + 8, y: my, text: labelOf(sKey, sv), colour: colour });
+      }
+    });
+
+    // nudge end labels apart so stacked series stay readable
+    endLabels.sort(function (a, b) { return a.y - b.y; });
+    for (var li = 1; li < endLabels.length; li++) {
+      var gap = endLabels[li].y - endLabels[li - 1].y;
+      if (gap < 12) endLabels[li].y = endLabels[li - 1].y + 12;
+    }
+    endLabels.forEach(function (L2) {
+      el("text", { x: L2.x, y: Math.min(L2.y, PH) + 4, class: "tick", fill: L2.colour },
+         g).textContent = L2.text;
+    });
+  });
+
+  // Single-facet mode keeps the per-panel title it always had.
+  function drawPanelTitle(g, cell) {
+    var key = cell.rv !== null ? rKey : (cell.cv !== null ? cKey : null);
+    if (!key) return;
+    var v = cell.rv !== null ? cell.rv : cell.cv;
+    el("text", { x: 0, y: -10, class: "facet-title" }, g)
+      .textContent = FLABEL[key] + " = " + labelOf(key, v);
+  }
+
+  function facetSuffix(cell) {
+    var bits = [];
+    if (cell.rv !== null) bits.push(labelOf(rKey, cell.rv));
+    if (cell.cv !== null) bits.push(labelOf(cKey, cell.cv));
+    return bits.length ? " · " + escapeHtml(bits.join(" · ")) : "";
+  }
+
+  scroll.appendChild(svg);
+  c.appendChild(scroll);
+
+  var facetPart = twoD ? "panels-" + rKey + "-x-" + cKey
+                : rKey ? "panelrows-" + rKey
+                : cKey ? "panels-" + cKey : "";
+  attachExport(c, "curves", ["by-" + XKEY, "colour-" + sKey, facetPart]);
+
+  c.appendChild(legendFor(sKey, sLevels.slice(0, SERIES.length), "line"));
+
+  if (colsReduced) {
+    c.appendChild(notice("Asked for " + askedCols + " panels per row, drew " + nCols +
+      " &mdash; " + askedCols + " would put each panel below the width a curve stays " +
+      "readable at. Widen the window for more.", true));
+  }
+
+  if (cells.length > 48) {
+    c.appendChild(notice("This grid is " + nRows + " × " + nCols + " = " + cells.length +
+      " panels. Filter a factor down, or move one off the grid, to keep them readable.", true));
+  }
+
+  var notes = ["<b>Layer 0</b> is the raw input features, before any message passing. " +
+               "A property already recoverable there was never learned by the network."];
+  if (METRICS[state.metric].ciLower) {
+    notes.push("<b>Shaded bands</b> are the 95% bootstrap CI, drawn only where a point is " +
+      "a single run &mdash; a band over a collapsed mean would invent precision.");
+  }
+  notes.push("The <b>dashed red line</b> is " + METRICS[state.metric].label + " = 0.");
+  notes.push("A <b>red star ★</b> marks a point several runs land on. " +
+    "<i>Split</i> draws each run as its own line instead; <i>Break</i> refuses to " +
+    "place a value at all; <i>Mean</i> and <i>Median</i> collapse but stay flagged.");
+  if (twoD) {
+    notes.push("<b>Y scale</b> matters here: <i>Per row</i> gives each row its own range, so " +
+      "columns stay comparable without the widest-ranging row flattening the rest.");
+  }
+  c.appendChild(howto(notes));
+  host.appendChild(c);
+  return host;
+}
+
+function clamp(v, dom) { return Math.max(dom[0], Math.min(dom[1], v)); }
+
+function padDomain(lo, hi, m) {
+  if (m.higherBetter && lo > 0) lo = 0;
+  if (lo === hi) { lo -= 0.05; hi += 0.05; }
+  var pad = (hi - lo) * 0.08;
+  return [lo - pad, hi + pad];
+}
+
+function emptyBox() {
+  var d = document.createElement("div");
+  d.className = "empty";
+  d.textContent = "No runs match the current filters. Widen a filter above.";
+  return d;
+}
+
+// ─────────────────────────────────────────────────────────────
+// View: coverage matrix
+// ─────────────────────────────────────────────────────────────
+
+function viewMatrix(rows) {
+  var host = document.createElement("div");
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.gap = "14px";
+
+  var opts = document.createElement("div");
+  opts.className = "panel controls";
+  var fopts = FACTORS.map(function (f) { return { value: f.key, label: f.label }; });
+  opts.appendChild(makeSelect("Rows", state.matRow, fopts, function (v) {
+    if (v === state.matCol) state.matCol = state.matRow;
+    state.matRow = v; render();
+  }));
+  opts.appendChild(makeSelect("Columns", state.matCol, fopts, function (v) {
+    if (v === state.matRow) state.matRow = state.matCol;
+    state.matCol = v; render();
+  }));
+  opts.appendChild(makeSelect("Runs in one cell", state.aggregate, AGG_MODES,
+    function (v) { state.aggregate = v; render(); }));
+  host.appendChild(opts);
+
+  var c = card("Every condition at a glance",
+    "One cell per factor pair. Blank cells never ran.");
+
+  if (!rows.length) { c.appendChild(emptyBox()); host.appendChild(c); return host; }
+
+  var w = crossTargetWarning(rows);
+  if (w) c.appendChild(w);
+
+  var rKey = state.matRow, cKey = state.matCol;
+  var rLev = levelsOf(rKey, rows), cLev = levelsOf(cKey, rows);
+  var m = METRICS[state.metric];
+
+  // A heatmap cell holds one number, so there is no "split" here: unless an
+  // aggregate is explicitly chosen, a multi-run cell shows the star and its
+  // count rather than a value nobody asked for.
+  var aggMode = state.aggregate;
+  var collapses = aggMode === "mean" || aggMode === "median";
+  var free = freeFactors(rows, [rKey, cKey]);
+
+  if (free.length) {
+    var buttons = [];
+    free.forEach(function (f) {
+      buttons.push({ label: "Rows: " + FLABEL[f.key], onClick: function () {
+        if (state.matCol === f.key) state.matCol = state.matRow;
+        state.matRow = f.key; render();
+      }});
+      buttons.push({ label: "Columns: " + FLABEL[f.key], onClick: function () {
+        if (state.matRow === f.key) state.matRow = state.matCol;
+        state.matCol = f.key; render();
+      }});
+      buttons.push({ label: "Keep one " + FLABEL[f.key], onClick: function () {
+        keepFirstLevel(f.key, rows);
+      }});
+    });
+    if (!collapses) {
+      buttons.push({ label: "Average them", onClick: function () {
+        state.aggregate = "mean"; render();
+      }});
+    }
+    c.appendChild(conflictBanner(free, buttons));
+  }
+
+  var cells = {};
+  rows.forEach(function (r) {
+    var k = String(r[rKey]) + " " + String(r[cKey]);
+    (cells[k] = cells[k] || []).push(r);
+  });
+
+  var vals = rows.map(metricOf).filter(function (v) { return v !== null; });
+  var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  if (lo === hi) { lo -= 0.001; hi += 0.001; }
+
+  function ramp(v) {
+    // dark = better, always; direction stated in the scale legend
+    var t = (v - lo) / (hi - lo);
+    if (!m.higherBetter) t = 1 - t;
+    var i = Math.max(0, Math.min(SEQ.length - 1, Math.round(t * (SEQ.length - 1))));
+    return { css: cssvar(SEQ[i]), idx: i };
+  }
+
+  var CW = Math.max(74, Math.min(132, 900 / cLev.length));
+  var CH = 40;
+  // row-label gutter sized to the longest label so nothing is clipped
+  var longest = rLev.reduce(function (a, v) {
+    return Math.max(a, labelOf(rKey, v).length); }, 0);
+  var LW = Math.max(96, Math.min(260, longest * 7.1 + 20)), TH = 46;
+  var W = LW + cLev.length * CW + 12, H = TH + rLev.length * CH + 8;
+
+  var scroll = document.createElement("div");
+  scroll.className = "scroller";
+  var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H,
+                        role: "img", "aria-label": "Metric by " + FLABEL[rKey] + " and " + FLABEL[cKey] });
+
+  cLev.forEach(function (cv, j) {
+    el("text", { x: LW + j * CW + CW / 2, y: TH - 14, "text-anchor": "middle",
+                 class: "facet-title" }, svg).textContent = labelOf(cKey, cv);
+  });
+  el("text", { x: LW, y: 14, class: "axlabel", "text-anchor": "start" }, svg)
+    .textContent = FLABEL[cKey] + " →";
+  el("text", { x: 4, y: 14, class: "axlabel" }, svg).textContent = FLABEL[rKey] + " ↓";
+
+  rLev.forEach(function (rv, i) {
+    var y = TH + i * CH;
+    el("text", { x: LW - 10, y: y + CH / 2 + 4, "text-anchor": "end", class: "axlabel",
+                 fill: cssvar("--ink") }, svg).textContent = labelOf(rKey, rv);
+
+    cLev.forEach(function (cv, j) {
+      var x = LW + j * CW;
+      var group = cells[String(rv) + " " + String(cv)];
+      if (!group) {
+        el("rect", { x: x + 1, y: y + 1, width: CW - 2, height: CH - 2, rx: 4,
+                     fill: "none", stroke: cssvar("--grid"), "stroke-width": 1,
+                     "stroke-dasharray": "3 3" }, svg);
+        el("text", { x: x + CW / 2, y: y + CH / 2 + 4, "text-anchor": "middle",
+                     class: "tick" }, svg).textContent = "—";
+        return;
+      }
+      var gv = group.map(metricOf).filter(function (v) { return v !== null; });
+      var collapsed = gv.length > 1;
+
+      if (collapsed && !collapses) {
+        // several runs, no aggregate chosen: show the collision, not a number
+        el("rect", { x: x + 1, y: y + 1, width: CW - 2, height: CH - 2, rx: 4,
+                     fill: cssvar("--surface-2"), stroke: cssvar("--surface"),
+                     "stroke-width": 2 }, svg);
+        drawStar(svg, x + CW / 2, y + CH / 2 - 4, group.length, 6);
+        el("text", { x: x + CW / 2, y: y + CH / 2 + 15, "text-anchor": "middle",
+                     class: "tick" }, svg).textContent = "n=" + group.length;
+      } else {
+        var value = aggregateValue(gv, aggMode);
+        var col = ramp(value);
+        el("rect", { x: x + 1, y: y + 1, width: CW - 2, height: CH - 2, rx: 4,
+                     fill: col.css, stroke: cssvar("--surface"), "stroke-width": 2 }, svg);
+        var ink = col.idx >= 7 ? "#ffffff" : "#0b0b0b";
+        el("text", { x: x + CW / 2, y: y + CH / 2 + (collapsed ? 0 : 4),
+                     "text-anchor": "middle", fill: ink,
+                     style: "font-size:12.5px;font-variant-numeric:tabular-nums;font-family:'IBM Plex Mono',monospace" },
+           svg).textContent = fmt(value);
+        if (collapsed) {
+          drawStar(svg, x + 12, y + 12, group.length, 5);
+          el("text", { x: x + CW / 2, y: y + CH / 2 + 13, "text-anchor": "middle",
+                       fill: ink, opacity: 0.75, style: "font-size:9.5px" }, svg)
+            .textContent = "n=" + group.length;
+        }
+      }
+      var hit = el("rect", { x: x, y: y, width: CW, height: CH, fill: "transparent",
+                             style: "cursor:pointer" }, svg);
+      hookTip(hit, function () {
+        return runTip(group, escapeHtml(labelOf(rKey, rv) + " × " + labelOf(cKey, cv)));
+      });
+    });
+  });
+
+  scroll.appendChild(svg);
+  c.appendChild(scroll);
+  attachExport(c, "matrix", [rKey + "-x-" + cKey]);
+  c.appendChild(scaleLegend(lo, hi, m));
+  c.appendChild(howto([
+    "This is the view that replaces a wall of parity panels &mdash; the numbers those " +
+    "panels carried, laid out so they compare directly.",
+    "A <b>dashed empty cell</b> is a condition that never ran; the sweep is about 10% " +
+    "populated, so the gaps are part of the picture.",
+    "<b>n=</b> means the cell holds that many runs. A <b>red star ★</b> says they " +
+    "were never combined &mdash; pick an aggregate, or put the leftover factor on an axis."
+  ]));
+  host.appendChild(c);
+  return host;
+}
+
+function scaleLegend(lo, hi, m) {
+  var wrap = document.createElement("div");
+  wrap.className = "legend";
+  var lab = document.createElement("span");
+  lab.className = "item";
+  lab.innerHTML = "<b style='color:var(--ink)'>" + m.label + "</b>";
+  wrap.appendChild(lab);
+
+  var lowTxt = document.createElement("span");
+  lowTxt.className = "item";
+  lowTxt.textContent = tickFmt(lo);
+  wrap.appendChild(lowTxt);
+
+  var bar = document.createElement("span");
+  bar.style.display = "inline-flex";
+  bar.style.borderRadius = "3px";
+  bar.style.overflow = "hidden";
+  SEQ.forEach(function (q) {
+    var s = document.createElement("span");
+    s.style.width = "16px"; s.style.height = "11px";
+    s.style.background = "var(" + q + ")";
+    bar.appendChild(s);
+  });
+  if (!m.higherBetter) bar.style.transform = "scaleX(-1)";
+  wrap.appendChild(bar);
+
+  var hiTxt = document.createElement("span");
+  hiTxt.className = "item";
+  hiTxt.textContent = tickFmt(hi);
+  wrap.appendChild(hiTxt);
+
+  var dir = document.createElement("span");
+  dir.className = "item";
+  dir.style.color = "var(--ink-muted)";
+  dir.textContent = m.higherBetter ? "darker = better (higher)" : "darker = better (lower)";
+  wrap.appendChild(dir);
+
+  return wrap;
+}
+
+// ─────────────────────────────────────────────────────────────
+// View: ranked intervals
+// ─────────────────────────────────────────────────────────────
+
+function viewRank(rows) {
+  var host = document.createElement("div");
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.gap = "14px";
+
+  var opts = document.createElement("div");
+  opts.className = "panel controls";
+  opts.appendChild(makeSelect("Colour by", state.rankColor,
+    FACTORS.map(function (f) { return { value: f.key, label: f.label }; }),
+    function (v) { state.rankColor = v; render(); }));
+  host.appendChild(opts);
+
+  var c = card("Runs ranked, with their bootstrap intervals",
+    "Two runs differ meaningfully only where their intervals stay apart.");
+
+  if (!rows.length) { c.appendChild(emptyBox()); host.appendChild(c); return host; }
+
+  var w = crossTargetWarning(rows);
+  if (w) c.appendChild(w);
+
+  var m = METRICS[state.metric];
+  var data = rows.filter(function (r) { return metricOf(r) !== null; })
+                 .slice()
+                 .sort(function (a, b) {
+                   return (m.higherBetter ? -1 : 1) * (metricOf(a) - metricOf(b));
+                 });
+
+  var CAP = 60;
+  var truncated = data.length > CAP;
+  if (truncated) data = data.slice(0, CAP);
+
+  var cKey = state.rankColor;
+  var cLev = levelsOf(cKey, rows);
+  var cIdx = {};
+  cLev.forEach(function (v, i) { cIdx[String(v)] = i; });
+
+  var showCI = !!METRICS[state.metric].ciLower;
+  var lo = Infinity, hi = -Infinity;
+  data.forEach(function (r) {
+    var v = metricOf(r), ci = ciOf(r);
+    lo = Math.min(lo, v, ci ? ci[0] : v);
+    hi = Math.max(hi, v, ci ? ci[1] : v);
+  });
+  if (m.higherBetter && lo > 0) lo = 0;
+  var pad = (hi - lo) * 0.06 || 0.05;
+  lo -= pad; hi += pad;
+
+  function rowLabel(r) {
+    return FKEYS.map(function (k) {
+      return String(labelOf(k, r[k])).replace("-k-fold", "");
+    }).join(" \u00b7 ");
+  }
+
+  var RH = 21;
+  // label gutter sized to the longest row label (11px mono \u2248 6.65px/char)
+  var LW = Math.min(430, Math.max(220, data.reduce(function (a, r) {
+    return Math.max(a, rowLabel(r).length); }, 0) * 6.65 + 20));
+  var PW = 520;
+  var W = LW + PW + 78, H = 34 + data.length * RH + 30;
+
+  var scroll = document.createElement("div");
+  scroll.className = "scroller";
+  var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H,
+                        role: "img", "aria-label": "Runs ranked by " + m.label });
+
+  function xs(v) { return LW + (v - lo) / (hi - lo) * PW; }
+
+  niceTicks(lo, hi, 6).forEach(function (t) {
+    if (t < lo || t > hi) return;
+    el("line", { x1: xs(t), y1: 28, x2: xs(t), y2: H - 24, class: "gridline" }, svg);
+    el("text", { x: xs(t), y: 20, "text-anchor": "middle", class: "tick" }, svg).textContent = tickFmt(t);
+    el("text", { x: xs(t), y: H - 10, "text-anchor": "middle", class: "tick" }, svg).textContent = tickFmt(t);
+  });
+  if (lo < 0 && hi > 0) {
+    el("line", { x1: xs(0), y1: 28, x2: xs(0), y2: H - 24, class: "zeroline" }, svg);
+  }
+
+  data.forEach(function (r, i) {
+    var y = 34 + i * RH + RH / 2;
+    var colour = cssvar(SERIES[(cIdx[String(r[cKey])] || 0) % SERIES.length]);
+
+    var lbl = rowLabel(r);
+    el("text", { x: LW - 12, y: y + 4, "text-anchor": "end", class: "tick",
+                 fill: cssvar("--ink-2") }, svg).textContent = lbl;
+
+    var ci = ciOf(r);
+    if (ci) {
+      el("line", { x1: xs(ci[0]), y1: y, x2: xs(ci[1]), y2: y,
+                   stroke: colour, "stroke-width": 2, "stroke-linecap": "round",
+                   opacity: 0.55 }, svg);
+    }
+    var bl = baselineOf(r);
+    if (bl !== null) {
+      el("line", { x1: xs(bl), y1: y - 5, x2: xs(bl), y2: y + 5,
+                   stroke: cssvar("--ink-muted"), "stroke-width": 1.5 }, svg);
+    }
+    el("circle", { cx: xs(metricOf(r)), cy: y, r: 4.5, fill: colour,
+                   stroke: cssvar("--surface"), "stroke-width": 2 }, svg);
+    el("text", { x: xs(metricOf(r)) + 10, y: y + 4, class: "tick",
+                 fill: cssvar("--ink") }, svg).textContent = fmt(metricOf(r));
+
+    var hit = el("rect", { x: 0, y: y - RH / 2, width: W, height: RH,
+                           fill: "transparent", style: "cursor:pointer" }, svg);
+    hookTip(hit, function () { return runTip([r], escapeHtml(lbl)); });
+  });
+
+  scroll.appendChild(svg);
+  c.appendChild(scroll);
+  attachExport(c, "ranked", ["colour-" + cKey]);
+  c.appendChild(legendFor(cKey, cLev.slice(0, SERIES.length), "swatch"));
+  var rankNotes = ["Each run is one estimate, so the mark is a <b>dot and its CI</b>, not a " +
+                   "box &mdash; a box needs replicates this sweep does not have."];
+  if (showCI) {
+    rankNotes.push("The <b>faded bar</b> is the 95% bootstrap CI; the <b>short grey tick</b> " +
+      "is that run's shuffled-ident baseline, where it has one.");
+  }
+  c.appendChild(howto(rankNotes));
+  if (truncated) {
+    c.appendChild(notice("Showing the top " + CAP + " of " + rows.length +
+      " runs in view. Filter further to see the rest.", true));
+  }
+  host.appendChild(c);
+  return host;
+}
+
+// ─────────────────────────────────────────────────────────────
+// View: table
+// ─────────────────────────────────────────────────────────────
+
+// factors, then every metric (with its interval, if it has one), then extras
+var TABLE_COLS = (function () {
+  var cols = FACTORS.map(function (f) {
+    // right-align a factor column when its levels are numeric, whatever it is called
+    var numeric = ALL_LEVELS[f.key].length > 0 &&
+                  ALL_LEVELS[f.key].every(function (v) { return typeof v === "number"; });
+    return { key: f.key, label: f.label, num: numeric, dec: null };
+  });
+  var seen = {};
+  cols.forEach(function (c) { seen[c.key] = true; });
+
+  METRIC_ORDER.forEach(function (k) {
+    var m = METRICS[k];
+    cols.push({ key: k, label: m.label, num: true, dec: m.dec });
+    seen[k] = true;
+    if (m.ciLower) {
+      cols.push({ key: m.ciLower, label: m.label + " lo", num: true, dec: m.dec });
+      cols.push({ key: m.ciUpper, label: m.label + " hi", num: true, dec: m.dec });
+      seen[m.ciLower] = seen[m.ciUpper] = true;
+    }
+  });
+
+  EXTRA_COLUMNS.forEach(function (c) {
+    if (seen[c.key]) return;
+    cols.push({ key: c.key, label: c.label, num: c.num, dec: c.dec });
+    seen[c.key] = true;
+  });
+  return cols;
+})();
+
+function viewTable(rows) {
+  var host = document.createElement("div");
+  var c = card("All runs in view",
+    "The rows the charts are drawing. Click a header to sort.");
+
+  if (!rows.length) { c.appendChild(emptyBox()); host.appendChild(c); return host; }
+
+  var data = rows.slice().sort(function (a, b) {
+    var x = a[state.sortKey], y = b[state.sortKey];
+    if (x === null || x === undefined) return 1;
+    if (y === null || y === undefined) return -1;
+    if (typeof x === "number" && typeof y === "number") return (x - y) * state.sortDir;
+    return String(x).localeCompare(String(y)) * state.sortDir;
+  });
+
+  var wrap = document.createElement("div");
+  wrap.className = "tablewrap";
+  var t = document.createElement("table");
+  var thead = document.createElement("thead");
+  var htr = document.createElement("tr");
+  TABLE_COLS.forEach(function (col) {
+    var th = document.createElement("th");
+    th.textContent = col.label + (state.sortKey === col.key ? (state.sortDir === 1 ? " ▲" : " ▼") : "");
+    if (col.num) th.style.textAlign = "right";
+    th.addEventListener("click", function () {
+      if (state.sortKey === col.key) state.sortDir *= -1;
+      else { state.sortKey = col.key; state.sortDir = col.num ? -1 : 1; }
+      render();
+    });
+    htr.appendChild(th);
+  });
+  thead.appendChild(htr);
+  t.appendChild(thead);
+
+  var tb = document.createElement("tbody");
+  data.forEach(function (r) {
+    var tr = document.createElement("tr");
+    TABLE_COLS.forEach(function (col) {
+      var td = document.createElement("td");
+      var v = r[col.key];
+      if (col.num) {
+        td.className = "num";
+        td.textContent = (v === null || v === undefined) ? "—"
+          : (col.dec === null || col.dec === undefined) ? String(v)
+            : Number(v).toFixed(col.dec);
+      } else {
+        td.textContent = v;
+      }
+      tr.appendChild(td);
+    });
+    tb.appendChild(tr);
+  });
+  t.appendChild(tb);
+  wrap.appendChild(t);
+  c.appendChild(wrap);
+
+  var bar = document.createElement("div");
+  bar.style.marginTop = "12px";
+  bar.style.display = "flex";
+  bar.style.gap = "10px";
+  bar.style.alignItems = "center";
+  var btn = document.createElement("button");
+  btn.className = "btn";
+  btn.type = "button";
+  btn.textContent = "Copy as CSV";
+  var msg = document.createElement("span");
+  msg.style.fontSize = "12.5px";
+  msg.style.color = "var(--ink-2)";
+  btn.addEventListener("click", function () {
+    var head = TABLE_COLS.map(function (c2) { return c2.key; }).join(",");
+    var body = data.map(function (r) {
+      return TABLE_COLS.map(function (c2) {
+        var v = r[c2.key];
+        return (v === null || v === undefined) ? "" : v;
+      }).join(",");
+    }).join("\n");
+    var text = head + "\n" + body;
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(
+        function () { msg.textContent = "Copied " + data.length + " rows."; },
+        function () { msg.textContent = "Clipboard blocked here — select the table and copy."; });
+    } else {
+      msg.textContent = "Clipboard blocked here — select the table and copy.";
+    }
+  });
+  bar.appendChild(btn); bar.appendChild(msg);
+  c.appendChild(bar);
+  c.appendChild(howto([
+    "Exactly the runs the charts are drawing &mdash; the filters above apply here too.",
+    "<b>Copy as CSV</b> puts this selection on the clipboard, in the column order shown."
+  ]));
+
+  host.appendChild(c);
+  return host;
+}
+
+// ─────────────────────────────────────────────────────────────
+// Render
+// ─────────────────────────────────────────────────────────────
+
+function render() {
+  hideTip();
+  var rows = filtered();
+  renderControls();
+  renderStats(rows);
+  renderTabs();
+
+  var host = document.getElementById("view");
+  host.innerHTML = "";
+  var node =
+    state.view === "curves" ? viewCurves(rows) :
+    state.view === "matrix" ? viewMatrix(rows) :
+    state.view === "rank"   ? viewRank(rows)   :
+                              viewTable(rows);
+  host.appendChild(node);
+}
+
+var themeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+if (themeQuery.addEventListener) themeQuery.addEventListener("change", render);
+
+// panel widths are measured, so a resize has to re-measure
+var resizeTimer = null, lastWidth = window.innerWidth;
+window.addEventListener("resize", function () {
+  if (window.innerWidth === lastWidth) return;
+  lastWidth = window.innerWidth;
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(render, 150);
+});
+
+(function stampProvenance() {
+  var host = document.getElementById("provenance");
+  if (!host) return;
+  host.innerHTML = "<b>This page.</b> Built by <code>prob/explorer/build.py</code> from " +
+    CONFIG.nRuns + " runs indexed under <code>" + escapeHtml(CONFIG.source) + "</code>" +
+    (CONFIG.generated ? " on " + escapeHtml(CONFIG.generated) : "") +
+    ". Rebuild with <code>uv run python -m prob.explorer</code>." +
+    (CONFIG.nDropped ? " " + CONFIG.nDropped + " further run(s) were set aside for " +
+      "missing a factor value, so they cannot be placed on any axis." : "");
+})();
+
+render();
+
+// Small handle for debugging and for driving the page from a console/harness:
+// the rasterizer and the current state, nothing that mutates on its own.
+window.probeExplorer = {
+  state: state,
+  config: CONFIG,
+  runs: RUNS,
+  render: render,
+  svgToDataUrl: svgToDataUrl,
+  svgToPngBlob: svgToPngBlob,
+  exportName: exportName
+};
+
+})();
+</script>
