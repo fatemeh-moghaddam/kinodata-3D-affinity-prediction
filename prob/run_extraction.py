@@ -18,6 +18,8 @@ import kinodata.configuration as cfg
 
 from prob.repr_extraction_utils import build_gnn_model, build_kd_ds, run_fold
 from prob.paths_and_io import (
+    GNN_MODEL_TYPES,
+    checkpoint_model_type,
     get_gnn_config_path,
     get_model_ckpt,
     get_model_dir,
@@ -56,6 +58,10 @@ class ProbingJobSpec:
     wandb_mode: str = "disabled"
     save_representations: bool = True
     save_predictions: bool = True
+    # DTI only: also write the per-tower ligand_layer_*/pocket_layer_* artifacts
+    # behind the joint layer_*. Off by default -- only branch-resolved analysis reads
+    # them, and they roughly triple the number of files a run leaves behind.
+    emit_tower_reprs: bool = False
     # Evaluate the fold's test split only. Checkpoints were selected on min val/mae,
     # so val is not clean held-out data; include it only for representation probing.
     include_val: bool = True
@@ -71,7 +77,7 @@ class ResolvedPaths:
 
 
 def _validate_spec(spec: ProbingJobSpec) -> None:
-    if spec.gnn_model_type not in {"CGNN-3D", "CGNN", "DTI"}:
+    if spec.gnn_model_type not in GNN_MODEL_TYPES:
         raise ValueError(f"Invalid gnn_model_type: {spec.gnn_model_type}")
     if spec.split_type not in {"random-k-fold", "scaffold-k-fold", "pocket-k-fold"}:
         raise ValueError(f"Invalid split_type: {spec.split_type}")
@@ -82,11 +88,13 @@ def _validate_spec(spec: ProbingJobSpec) -> None:
 
 
 def resolve_paths(spec: ProbingJobSpec, fold: int) -> ResolvedPaths:
+    # Weights come from `checkpoint_model_type` (a readout variant reuses another
+    # model's checkpoint); outputs still go to this type's own tree.
     model_dir = get_model_dir(
         rmsd_threshold=spec.filter_rmsd_max_value,
         split_type=spec.split_type,
         split_fold=fold,
-        model_type=spec.gnn_model_type,
+        model_type=checkpoint_model_type(spec.gnn_model_type),
     )
     model_ckpt = get_model_ckpt(model_dir)
     split_file_path = get_split_file(spec.split_type, fold, spec.filter_rmsd_max_value)
@@ -139,14 +147,20 @@ def probe_layer_names(prob_config: cfg.Config, gnn_model_type: str) -> list[str]
 
     DTI has two towers of different depth. It reports a depth-aligned joint
     representation per ligand-tower layer, which is what the downstream probing reads
-    and is directly comparable to the CGNN layers, plus the per-tower representations
-    behind them for branch-resolved analysis.
+    and is directly comparable to the CGNN layers. The per-tower representations
+    behind them are written only when `emit_tower_reprs` is set, for branch-resolved
+    analysis; this must stay in step with `DTIModel._forward_prob`, since a name
+    listed here that the model never emits makes the resume check wait on a file that
+    will never appear.
     """
-    if gnn_model_type == "DTI":
+    if checkpoint_model_type(gnn_model_type) == "DTI":
         num_ligand = int(prob_config.get("num_layers", 3))
         num_pocket = int(prob_config.get("num_attention_blocks", 2))
+        names = [f"layer_{i}" for i in range(num_ligand + 1)]
+        if not prob_config.get("emit_tower_reprs", False):
+            return names
         return (
-            [f"layer_{i}" for i in range(num_ligand + 1)]
+            names
             + [f"ligand_layer_{i}" for i in range(num_ligand + 1)]
             + [f"pocket_layer_{i}" for i in range(num_pocket + 1)]
         )
@@ -221,6 +235,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         device="auto",
         k_fold=5,
         seed=96,
+        emit_tower_reprs=False,
         parse_args=False,  # keep CLI parsing out of this function by default
     )
 
@@ -229,7 +244,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         raise ValueError(f"Invalid arguments: {kwargs.keys() - defaults.keys()}")
 
     if "gnn_model_type" in kwargs:
-        assert kwargs["gnn_model_type"] in ["CGNN-3D", "CGNN", "DTI"], "Invalid GNN model type"
+        assert kwargs["gnn_model_type"] in GNN_MODEL_TYPES, "Invalid GNN model type"
     if "split_type" in kwargs:
         assert kwargs["split_type"] in ["random-k-fold", "scaffold-k-fold", "pocket-k-fold"], "Invalid split type"
     if "filter_rmsd_max_value" in kwargs:
@@ -257,6 +272,7 @@ def set_probing_config(**kwargs) -> cfg.Config:
         dtype_out=prob_config.dtype_out,
         k_fold=prob_config.k_fold,
         seed=prob_config.seed,
+        emit_tower_reprs=prob_config.emit_tower_reprs,
     )
     _validate_spec(spec)
 
@@ -268,6 +284,10 @@ def set_probing_config(**kwargs) -> cfg.Config:
             "model_ckpt": paths.model_ckpt,
             "split_file": paths.split_file,
             "output_dir": paths.output_root_dir,
+            # After the merge, not before: these are extraction-time choices, and a
+            # checkpoint's own config.json must not be able to override them.
+            "gnn_model_type": prob_config.gnn_model_type,
+            "emit_tower_reprs": spec.emit_tower_reprs,
         },
         allow_duplicates=True,
     )
@@ -286,7 +306,13 @@ if __name__ == "__main__":
     )
 
     parser = argparse.ArgumentParser(description="Generate probing dataset representations for a trained GNN.")
-    parser.add_argument("--gnn_model_type", default="CGNN-3D", choices=["CGNN-3D", "CGNN", "DTI"])
+    parser.add_argument(
+        "--gnn_model_type",
+        default="CGNN-3D",
+        choices=list(GNN_MODEL_TYPES),
+        help='"DTI-soft" reuses the DTI checkpoint but pools the probing readout with '
+             "softmax instead of sum, and writes to its own data/probing/DTI-soft/ tree",
+    )
     parser.add_argument(
         "--split_type",
         default="random-k-fold",
@@ -308,6 +334,14 @@ if __name__ == "__main__":
         help="also evaluate the fold's val split (default: test only). Val was used for "
              "checkpoint selection, so including it biases affinity metrics; use it only "
              "to enlarge the representation-probing sample.",
+    )
+    parser.add_argument(
+        "--emit_tower_reprs",
+        default=0,
+        type=int,
+        choices=[0, 1],
+        help="DTI only: also write the per-tower ligand_layer_*/pocket_layer_* "
+             "artifacts behind the joint layer_* ones (default: joint only)",
     )
     parser.add_argument(
         "--overwrite",
@@ -341,6 +375,7 @@ if __name__ == "__main__":
         save_representations=bool(args.save_representations),
         save_predictions=bool(args.save_predictions),
         include_val=bool(args.include_val),
+        emit_tower_reprs=bool(args.emit_tower_reprs),
     )
     _validate_spec(spec)
 
@@ -372,6 +407,7 @@ if __name__ == "__main__":
             device=spec.device,
             k_fold=spec.k_fold,
             seed=spec.seed,
+            emit_tower_reprs=spec.emit_tower_reprs,
         )
 
         logger.info("Fold %s/%s", fold + 1, spec.k_fold)

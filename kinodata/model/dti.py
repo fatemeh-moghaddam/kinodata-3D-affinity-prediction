@@ -12,6 +12,7 @@ from kinodata.types import NodeType
 from torch import Tensor
 from torch.nn import Embedding, LayerNorm, Linear, Module, ModuleList, Sequential, SiLU
 from torch_geometric.nn.pool import global_add_pool
+from torch_geometric.utils import softmax as segment_softmax
 from torch_geometric.utils import to_dense_batch
 
 
@@ -51,7 +52,17 @@ class DTIModel(RegressionModel):
     `prob` mirrors `ComplexTransformer.prob`: when set, forward returns the same
     4-tuple the probing extraction expects instead of a bare prediction. Training
     needs a bare prediction, so leave it off there.
+
+    `emit_tower_reprs` additionally writes the per-tower representations behind the
+    joint ones. They are only needed for branch-resolved analysis and otherwise just
+    triple the artifact count of a run, so they are off by default.
+
+    `repr_aggr` selects how the probing readout pools node/residue states into one
+    row per complex; see `_probe_pool`.
     """
+
+    #: Pooling functions the probing readout can use, by `repr_aggr` name.
+    REPR_AGGRS = ("sum", "softmax")
 
     def __init__(
         self,
@@ -60,13 +71,53 @@ class DTIModel(RegressionModel):
         pocket_encoder_cls: Callable[..., Encoder],
         decoder_cls: Callable[..., Decoder],
         prob: bool = True,
+        emit_tower_reprs: bool = False,
+        repr_aggr: str = "sum",
+        repr_aggr_t: float = 1.0,
     ) -> None:
         super().__init__(config)
+        if repr_aggr not in self.REPR_AGGRS:
+            raise ValueError(
+                f"Unknown repr_aggr {repr_aggr!r}, expected one of {self.REPR_AGGRS}"
+            )
         self.criterion = resolve_loss(config.loss_type)
         self.ligand_encoder = config.init(ligand_encoder_cls)
         self.pocket_encoder = config.init(pocket_encoder_cls)
         self.decoder = config.init(decoder_cls)
         self.prob = prob
+        self.emit_tower_reprs = emit_tower_reprs
+        self.repr_aggr = repr_aggr
+        self.repr_aggr_t = repr_aggr_t
+
+    def _probe_pool(self, x: Tensor, index: Optional[Tensor] = None) -> Tensor:
+        """
+        Pool a tower's node/residue states into one row per complex, for probing only.
+
+        The trained model sums, and that is what `repr_aggr="sum"` reproduces. Sum
+        pooling keeps the magnitude of the total, so ||repr|| grows with the number
+        of atoms/residues and the complex's size is legible straight off the vector.
+        `ComplexTransformer` instead pools with `SoftmaxAggregation`, whose weights
+        sum to one per graph per channel -- a weighted *mean*, from which size has
+        been divided out. Probing results are not comparable across a difference like
+        that, so `repr_aggr="softmax"` re-reads the same trained DTI weights through
+        the normalizing pooling to separate the two effects.
+
+        The softmax here is deliberately parameter-free (the `learn=False` form of
+        `SoftmaxAggregation`, temperature `repr_aggr_t`): the checkpoint is frozen, so
+        a learnable per-channel temperature would be randomly initialised and would
+        break the strict `load_state_dict`. It is therefore not bit-identical to the
+        temperature `ComplexTransformer` trained -- it isolates sum-vs-normalized-mean,
+        not CGNN's exact operator.
+
+        This affects the *readout only*. The prediction path keeps the decoder's
+        trained sum pooling untouched, so predictions and the `layer_{N}` decoder
+        representation are identical whichever `repr_aggr` is set; feeding softmax-
+        pooled (roughly 1/N-scaled) inputs to `f_ligand`/`f_pocket` would take them
+        far off the distribution they were trained on.
+        """
+        if self.repr_aggr == "softmax":
+            return _softmax_aggr(x, index, t=self.repr_aggr_t)
+        return _sum_aggr(x, index)
 
     def forward(self, batch):
         if self.prob:
@@ -80,12 +131,13 @@ class DTIModel(RegressionModel):
         """
         Forward pass that also reports per-layer *graph-level* representations.
 
-        The two towers pool differently -- the ligand tower sums over a variable
-        number of atoms via its batch index, the pocket tower over the fixed 85
-        residues of a dense tensor -- so unlike `ComplexTransformer` there is no
-        single `aggr` a caller could apply afterwards. Pooling therefore happens
-        here, with each tower's own pooling, and the returned tensors are already
-        one row per complex (signalled to the extractor by a `None` batch index).
+        The two towers pool differently -- the ligand tower over a variable number
+        of atoms via its batch index, the pocket tower over the fixed 85 residues of
+        a dense tensor -- so unlike `ComplexTransformer` there is no single `aggr` a
+        caller could apply afterwards. Pooling therefore happens here, via
+        `_probe_pool` (see there for what `repr_aggr` changes), and the returned
+        tensors are already one row per complex (signalled to the extractor by a
+        `None` batch index).
         """
         if not hasattr(self.decoder, "combined_representation"):
             raise NotImplementedError(
@@ -104,20 +156,28 @@ class DTIModel(RegressionModel):
         )
         prediction = self.decoder.f_combined(combined)
 
-        ligand_pooled = [_sum_aggr(x, batch_ligand).detach() for x in ligand_layers]
-        pocket_pooled = [_sum_aggr(x, batch_pocket).detach() for x in pocket_layers]
+        ligand_pooled = [self._probe_pool(x, batch_ligand).detach() for x in ligand_layers]
+        pocket_pooled = [self._probe_pool(x, batch_pocket).detach() for x in pocket_layers]
 
         graph_reprs = {}
-        for depth, x in enumerate(ligand_pooled):
-            graph_reprs[f"ligand_layer_{depth}"] = (x, None)
-        for depth, x in enumerate(pocket_pooled):
-            graph_reprs[f"pocket_layer_{depth}"] = (x, None)
+        if self.emit_tower_reprs:
+            for depth, x in enumerate(ligand_pooled):
+                graph_reprs[f"ligand_layer_{depth}"] = (x, None)
+            for depth, x in enumerate(pocket_pooled):
+                graph_reprs[f"pocket_layer_{depth}"] = (x, None)
 
         # Depth-aligned joint representations, comparable to ComplexTransformer's
-        # `layer_i`. The towers can differ in depth (3 GINE layers vs 2 attention
+        # `layer_i`. The towers can differ in depth (4 GINE layers vs 2 attention
         # blocks in the trained baseline), so a tower that runs out keeps its last
         # layer. The deepest one is the decoder input -- the analogue of the pooled
         # representation ComplexTransformer feeds to its head.
+        #
+        # That last one is the odd one out in two ways, and cross-model comparisons
+        # should generally stop one short of it. It is the only `layer_*` carrying
+        # the decoder's own trained f_ligand/f_pocket MLPs, which ComplexTransformer
+        # has no counterpart to (its pooled `graph_repr` is returned separately and
+        # the extractor drops it); and it always comes from the decoder's trained sum
+        # pooling, so `repr_aggr` does not reach it.
         last_pocket = len(pocket_pooled) - 1
         for depth in range(len(ligand_pooled) - 1):
             graph_reprs[f"layer_{depth}"] = (
@@ -201,6 +261,33 @@ def _sum_aggr(
         return x.sum(dim=feature_dim)
 
 
+def _softmax_aggr(
+    x: Tensor,
+    index: Optional[Tensor] = None,
+    feature_dim: int = 1,
+    t: float = 1.0,
+) -> Tensor:
+    """
+    Softmax-weighted mean over the same axis `_sum_aggr` sums over, per channel.
+
+    Reproduces `torch_geometric.nn.aggr.SoftmaxAggregation(learn=False, t=t)`:
+    weights are a softmax of the values themselves, so they sum to one within each
+    graph and each channel. The result is a weighted mean rather than a total --
+    unlike `_sum_aggr`, it carries no information about how many atoms or residues
+    were pooled. That difference is the whole point; see `DTIModel._probe_pool`.
+
+    Written out rather than instantiated as a module so it stays stateless: DTIModel
+    is built to load a frozen checkpoint with a strict `load_state_dict`, and an
+    aggregation module would register buffers/parameters the checkpoint lacks.
+    """
+    if index is not None:
+        # Segmented softmax down dim 0, independently per feature column.
+        weight = segment_softmax(t * x, index, dim=0)
+        return global_add_pool(weight * x, index)
+    weight = torch.softmax(t * x, dim=feature_dim)
+    return (weight * x).sum(dim=feature_dim)
+
+
 class GlobalSumDecoder(Module):
     def __init__(
         self,
@@ -276,4 +363,7 @@ def make_model(config):
         ResidueModel,
         GlobalSumDecoder,
         prob=config.get("prob", True),
+        emit_tower_reprs=config.get("emit_tower_reprs", False),
+        repr_aggr=config.get("repr_aggr", "sum"),
+        repr_aggr_t=config.get("repr_aggr_t", 1.0),
     )

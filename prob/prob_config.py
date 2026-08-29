@@ -3,7 +3,7 @@ import sys
 
 import kinodata.configuration as cfg
 
-from prob.paths_and_io import get_out_dir
+from prob.paths_and_io import GNN_MODEL_TYPES, get_out_dir
 
 
 TARGET_FILE = None
@@ -57,7 +57,7 @@ def get_ds_load_config(**kwargs):
         raise ValueError(f"Invalid arguments: {invalid}")
 
     if "gnn_model_type" in kwargs:
-        assert kwargs["gnn_model_type"] in ["CGNN-3D", "CGNN", "DTI"], "Invalid GNN model type"
+        assert kwargs["gnn_model_type"] in GNN_MODEL_TYPES, "Invalid GNN model type"
     if "split_type" in kwargs:
         assert kwargs["split_type"] in ["random-k-fold", "scaffold-k-fold", "pocket-k-fold"], "Invalid split type"
     if "filter_rmsd_max_value" in kwargs:
@@ -82,7 +82,7 @@ def get_ds_load_config(**kwargs):
     # model's directory -- e.g. a `--gnn_model_type CGNN` job would silently
     # read X from and write its results into data/probing/CGNN-3D/...
     gnn_model_type = prob_ds_config["gnn_model_type"]
-    assert gnn_model_type in ["CGNN-3D", "CGNN", "DTI"], (
+    assert gnn_model_type in GNN_MODEL_TYPES, (
         f"Invalid GNN model type: {gnn_model_type!r}"
     )
     output_dir = get_out_dir(

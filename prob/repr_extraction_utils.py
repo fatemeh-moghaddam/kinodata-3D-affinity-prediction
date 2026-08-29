@@ -50,8 +50,17 @@ CPU_COUNT = int(os.environ.get("CPU_COUNT", "16"))
 
 GNN_MAKERS = {
     "DTI": make_dti_baseline,
+    "DTI-soft": make_dti_baseline,
     "CGNN": make_complex_transformer,
     "CGNN-3D": make_complex_transformer,
+}
+
+# Config a model type implies by its *name* rather than by its checkpoint. "DTI-soft"
+# loads the same weights as "DTI" (see `checkpoint_model_type`) and differs only in
+# how the probing readout pools them, so the difference has to be injected here --
+# the checkpoint's own config.json knows nothing about it.
+GNN_CONFIG_OVERRIDES: Dict[str, Dict[str, object]] = {
+    "DTI-soft": {"repr_aggr": "softmax"},
 }
 
 
@@ -149,6 +158,9 @@ def build_kd_ds(
 def build_gnn_model(config: cfg.Config) -> RegressionModel:
     """
     Build and load a GNN from config (model type + checkpoint).
+
+    Any `GNN_CONFIG_OVERRIDES` for the type are applied first, so a readout variant
+    like "DTI-soft" is configured before the maker reads the config.
     """
     gnn_type = config.gnn_model_type
     if gnn_type not in GNN_MAKERS:
@@ -156,6 +168,7 @@ def build_gnn_model(config: cfg.Config) -> RegressionModel:
             f"Unknown GNN model type: {gnn_type}. Expected one of {list(GNN_MAKERS)}"
         )
 
+    config.update(GNN_CONFIG_OVERRIDES.get(gnn_type, {}))
     maker = GNN_MAKERS[gnn_type]
     model = maker(config)
     if not isinstance(model, RegressionModel):

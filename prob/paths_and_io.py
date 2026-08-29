@@ -38,6 +38,36 @@ def get_data_dir(prob: bool = True) -> Path:
         return get_project_root() / "data/probing"
     return get_project_root() / "data"
 # ─────────────────────────────────────────────────────────────
+# Model types
+# ─────────────────────────────────────────────────────────────
+
+#: Every `gnn_model_type` the probing pipeline accepts. `gnn_model_type` is both a
+#: validated argument and a path component (see `get_out_dir`), so this is the one
+#: list to extend when a new readout variant is added -- discovery, plotting and the
+#: explorer decode the factor straight off the directory name and need no change.
+#: Names must not contain "_": `build_experiment_name` joins factors with it.
+GNN_MODEL_TYPES = ("CGNN-3D", "CGNN", "DTI", "DTI-soft")
+
+#: Variants that are not separately trained models but a re-reading of another
+#: model's checkpoint. Maps output-dir name -> the model type whose weights to load.
+_CHECKPOINT_ALIASES = {"DTI-soft": "DTI"}
+
+
+def checkpoint_model_type(gnn_model_type: str) -> str:
+    """
+    The model type whose checkpoint `gnn_model_type` runs on.
+
+    Usually itself. "DTI-soft" is not a trained model: it is the trained DTI weights
+    read out with softmax instead of sum pooling, so it must load from models/.../DTI/
+    while still writing to its own data/probing/DTI-soft/ tree. Resolving this in
+    `get_model_dir` directly would be worse -- that function *creates* the directory
+    it returns, so a missing models/.../DTI-soft/ would be silently mkdir'd and then
+    fail on the checkpoint glob.
+    """
+    return _CHECKPOINT_ALIASES.get(gnn_model_type, gnn_model_type)
+
+
+# ─────────────────────────────────────────────────────────────
 # Directory helpers
 # ─────────────────────────────────────────────────────────────
 def get_model_dir(
