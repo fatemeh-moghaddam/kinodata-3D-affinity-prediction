@@ -2,24 +2,23 @@ universe = docker
 docker_image = gjoschka/kinodata3d-pt2.5.1-cu121-cudnn9
 executable = generate_prob_dataset.sh
 arguments = $(script) $(split) $(rmsd) $(gnn) $(overwrite)
-output = gen_scaffold_reps.$(ClusterId).$(ProcId).out
-error = gen_scaffold_reps.$(ClusterId).$(ProcId).err
-log = gen_scaffold_reps.$(ClusterId).log
+output = generate_random_reprs.$(ClusterId).$(ProcId).out
+error = generate_random_reprs.$(ClusterId).$(ProcId).err
+log = generate_random_reprs.$(ClusterId).log
 should_transfer_files   = YES
 when_to_transfer_output = ON_EXIT
 request_GPUs = 1
 request_CPUs = 16
 request_memory = 64G
-requirements = UidDomain == "cs.uni-saarland.de"
 +WantGPUHomeMounted = true
 queue script, split, rmsd, gnn, overwrite from (
-   run_extraction, scaffold-k-fold, 2, CGNN-3D, 1
-   run_extraction, scaffold-k-fold, 2, DTI, 1
-   run_extraction, scaffold-k-fold, 2, CGNN, 1
-   run_extraction, scaffold-k-fold, 4, CGNN-3D, 1
-   run_extraction, scaffold-k-fold, 4, DTI, 1
-   run_extraction, scaffold-k-fold, 4, CGNN, 1
-   run_extraction, scaffold-k-fold, 6, CGNN-3D, 1
-   run_extraction, scaffold-k-fold, 6, CGNN, 1
-   run_extraction, scaffold-k-fold, 6, DTI, 1
+   run_extraction, random-k-fold, 2, CGNN-3D, 1
+   run_extraction, random-k-fold, 2, CGNN, 1
+   run_extraction, random-k-fold, 2, DTI, 1
+   run_extraction, random-k-fold, 4, CGNN-3D, 1
+   run_extraction, random-k-fold, 4, DTI, 1
+   run_extraction, random-k-fold, 4, CGNN, 1
+   run_extraction, random-k-fold, 6, CGNN-3D, 1
+   run_extraction, random-k-fold, 6, CGNN, 1
+   run_extraction, random-k-fold, 6, DTI, 1
 )

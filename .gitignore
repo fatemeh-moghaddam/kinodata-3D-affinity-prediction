@@ -13,6 +13,7 @@ wandb
 artifacts
 notebooks
 models
+_models
 
 # condor logs
 condor/*.log
