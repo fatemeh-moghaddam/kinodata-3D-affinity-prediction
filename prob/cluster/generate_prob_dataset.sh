@@ -24,4 +24,4 @@ python3 -c "import torch; print('cuda available:', torch.cuda.is_available(), '|
 OVERWRITE="${5:-0}"
 
 python3 prob/$1.py --split_type "$2" --filter_rmsd_max_value "$3" --gnn_model_type "$4" \
-    --device cuda --save_representations 1 --save_predictions 1 --include_val 0 --overwrite "${OVERWRITE}$"
+    --device cuda --save_representations 1 --save_predictions 1 --include_val 0 --overwrite "${OVERWRITE}"
