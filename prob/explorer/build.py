@@ -146,7 +146,9 @@ EXTRA_COLUMNS: list[Column] = [
 DEFAULT_FILTER: dict[str, list[str]] = {
     "prob_model": ["mlp"],
     "split_type": ["random-k-fold"],
-    "rmsd_threshold": ["2"],
+    # "rmsd_threshold": ["2"],
+    "layer": ["0", "1", "2", "3"],
+    "target": ["affinity"],
 }
 
 DEFAULT_METRIC = "r2"
@@ -158,8 +160,8 @@ DEFAULT_VIEW = {
     "colourBy": "gnn_model_type",
     # Depth curves lay out as a panel grid: rows x columns. Leave one unset ("")
     # for a single wrapped strip of panels, or set both for a 2-D facet grid.
-    "facetRowBy": "",
-    "facetColBy": "target",
+    "facetRowBy": "target",
+    "facetColBy": "rmsd_threshold",
     "panelsPerRow": "auto",       # "auto" | 1..4; only used with one facet set
     "yScale": "free",             # "free" (per panel) | "row" | "shared"
     # What to do when several runs land on one mark because a factor was left
@@ -167,7 +169,7 @@ DEFAULT_VIEW = {
     # "break" refuses to place a value; "mean"/"median" collapse but stay
     # flagged with a red star. Never silently averaged.
     "aggregate": "split",         # "split" | "mean" | "median" | "break"
-    "matrixRow": "target",
+    "matrixRow": "",
     "matrixCol": "layer",
 }
 
