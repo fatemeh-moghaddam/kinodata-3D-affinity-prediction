@@ -17,7 +17,7 @@ dependencies = [
     "scikit-learn>=1.6.1",
     "scipy>=1.15.1",
     "seaborn>=0.13.2",
-    "torch>=2.5.1",
+    "torch==2.2.2",
     "torch-cluster>=1.6.3",
     "torch-geometric>=2.6.1",
     "torchmetrics>=1.6.1",
@@ -26,4 +26,9 @@ dependencies = [
 ]
 
 [build-system]
-requires = ["torch>=2.5.1"]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv.extra-build-dependencies]
+torch-cluster = ["torch"]
+

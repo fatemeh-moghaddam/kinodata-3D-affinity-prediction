@@ -20,6 +20,9 @@ condor/*.json
 condor/*.out
 condor/*.err
 
+# Managing files between local and cluster
+prob/copy_probing_results.sh
+
 # local config files
 *_local.yaml
 
