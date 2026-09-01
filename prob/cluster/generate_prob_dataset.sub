@@ -11,7 +11,7 @@ request_GPUs = 1
 request_CPUs = 16
 request_memory = 64G
 +WantGPUHomeMounted = true
-queue script, split, rmsd, gnn, overwrite from (ß
+queue script, split, rmsd, gnn, overwrite from (
    run_extraction, scaffold-k-fold, 2, CGNN-3D, 1
    run_extraction, scaffold-k-fold, 2, CGNN, 1
    run_extraction, scaffold-k-fold, 2, DTI, 1
