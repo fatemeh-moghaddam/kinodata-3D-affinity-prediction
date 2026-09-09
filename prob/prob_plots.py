@@ -334,6 +334,7 @@ def plot_dist_with_log(
     df: pd.DataFrame | np.ndarray | pd.Series,
     col: str,
     *,
+    x_label: Optional[str] = None,
     bins: int = 80,
     show_ecdf: bool = False,
     kde: bool = False,
@@ -346,6 +347,8 @@ def plot_dist_with_log(
     """Side-by-side linear / log-count histogram of a column."""
     if context_overwrite is not None:
         sns.set_context(context_overwrite)
+
+    x_label = x_label or col
 
     if show_log_y:
         fig, axes = plt.subplots(1, 2, figsize=FIG_SIZE_WIDE, sharex=True)
@@ -364,7 +367,7 @@ def plot_dist_with_log(
         alpha=0.8,
         ax=axes[0],
     )
-    axes[0].set_xlabel(col)
+    axes[0].set_xlabel(x_label)
     axes[0].set_ylabel("Count")
     axes[0].set_title(title or f"{col} distribution")
 
@@ -390,7 +393,7 @@ def plot_dist_with_log(
             ax=axes[1],
         )
         axes[1].set_yscale("symlog", linthresh=20)
-        axes[1].set_xlabel(col)
+        axes[1].set_xlabel(x_label)
         axes[1].set_ylabel("Count (log scale)")
         axes[1].set_title(f"{title or col} (log-scaled)")
 
@@ -474,6 +477,8 @@ def plot_transformation_mapping(
     x_col: str,
     y_col: str,
     *,
+    x_label: Optional[str] = None,
+    y_label: Optional[str] = None,
     title: Optional[str] = None,
     kde_contour: bool = True,
     add_binned_trend: bool = True,
@@ -540,8 +545,10 @@ def plot_transformation_mapping(
         axes[0].legend(frameon=True)
 
     axes[0].set_title(f"{y_col} vs {x_col}")
-    axes[0].set_xlabel(x_col)
-    axes[0].set_ylabel(y_col)
+    x_label = x_label or x_col
+    y_label = y_label or y_col
+    axes[0].set_xlabel(x_label)
+    axes[0].set_ylabel(y_label)
 
     # Panel 2: density view
     if kde_contour:
@@ -578,10 +585,84 @@ def plot_transformation_mapping(
         cbar.set_label("Count")
         axes[1].set_title("Hexbin density")
 
-    axes[1].set_xlabel(x_col)
-    axes[1].set_ylabel(y_col)
+    axes[1].set_xlabel(x_label)
+    axes[1].set_ylabel(y_label)
 
-    fig.suptitle(title or f"Transformation mapping: {x_col} -> {y_col}", y=1.02)
+    fig.suptitle(title or f"Transformation mapping: {x_label} -> {y_label}", y=1.02)
     fig.tight_layout()
 
     _save_and_show(fig, save_path, show)
+
+
+
+def plot_joint_distribution(
+    df: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    *,
+    x_label: Optional[str] = None,
+    y_label: Optional[str] = None,
+    title: Optional[str] = None,
+    kind: str = "hist",
+    cmap: str = "viridis",
+    bins: int = 60,
+    add_fit: bool = True,
+    save_path: Optional[Path] = None,
+    show: bool = True,
+) -> dict[str, float]:
+    """Seaborn jointplot of `x_col` vs `y_col` with a correlation box (upper right).
+
+    `kind` is passed to sns.jointplot ("hist", "kde", "hex", "scatter", "reg").
+    Returns the Pearson/Spearman correlations.
+    """
+    data = df[[x_col, y_col]].dropna()
+    x, y = data[x_col].to_numpy(float), data[y_col].to_numpy(float)
+
+    pearson = pd.Series(x).corr(pd.Series(y), method="pearson")
+    spearman = pd.Series(x).corr(pd.Series(y), method="spearman")
+
+    joint_kws = {"cmap": cmap} if kind in {"hist", "kde", "hex"} else {}
+    if kind == "hist":
+        joint_kws.update(bins=bins, cbar=False)
+
+    # KDE/reg marginals are line plots and do not accept `bins`
+    marginal_kws = dict(bins=bins) if kind in {"hist", "hex", "scatter"} else {}
+
+    g = sns.jointplot(
+        data=data, x=x_col, y=y_col, kind=kind,
+        height=6, marginal_kws=marginal_kws, joint_kws=joint_kws, 
+    )
+
+    if add_fit:
+        res = linregress(x, y)
+        xs = np.array([x.min(), x.max()])
+        g.ax_joint.plot(
+            xs, res.intercept + res.slope * xs, color="crimson", lw=2,
+            label=f"Least-squares fit (slope = {res.slope:.3f})",
+        )
+        g.ax_joint.legend(loc="lower right", fontsize=8, framealpha=0.75)
+
+    # colour legend: the joint panel colours encode density
+    mappable = next(
+        (c for c in g.ax_joint.collections if getattr(c, "get_array", lambda: None)() is not None),
+        None,
+    )
+    if mappable is not None:
+        g.figure.subplots_adjust(right=0.86)
+        pos = g.ax_joint.get_position()
+        cax = g.figure.add_axes([0.89, pos.y0, 0.03, pos.height])
+        cbar = g.figure.colorbar(mappable, cax=cax)
+        cbar.set_label("Density" if kind == "kde" else "Count")
+
+    g.ax_joint.text(
+        0.97, 0.97,
+        f"n = {len(data):,}\nPearson = {pearson:.3f}\nSpearman = {spearman:.3f}",
+        transform=g.ax_joint.transAxes, ha="right", va="top", fontsize=9,
+        bbox=dict(boxstyle="round", facecolor="white", alpha=0.75, edgecolor="darkgray"),
+    )
+
+    g.set_axis_labels(x_label or x_col, y_label or y_col)
+    g.ax_marg_x.set_title(title or f"{y_label or y_col} vs {x_label or x_col}")
+
+    _save_and_show(g.figure, save_path, show)
+    return {"pearson": pearson, "spearman": spearman, "n": len(data)}
