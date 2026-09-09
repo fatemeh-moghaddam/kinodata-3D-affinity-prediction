@@ -79,21 +79,23 @@ def test_default_view_names_both_facet_axes():
     survivable -- the page falls back rather than rendering nothing."""
     defaults = build_payload(make_runs())["config"]["defaults"]
 
-    for key in ("depthAxis", "colourBy", "facetRowBy", "facetColBy",
+    for key in ("depthAxis", "colourBy", "shapeBy", "facetRowBy", "facetColBy",
                 "panelsPerRow", "yScale", "matrixRow", "matrixCol"):
         assert key in defaults, f"{key} missing from config.defaults"
 
-    # a facet axis may legitimately be unset; the others must name real factors
+    # The matrix needs both its axes -- a heatmap with one is a list -- so ""
+    # is only meaningful for the depth curves' optional channels.
     for key in ("depthAxis", "colourBy", "matrixRow", "matrixCol"):
         assert defaults[key] in FKEYS, f"{key} is not a factor"
-    for key in ("facetRowBy", "facetColBy"):
+    for key in ("shapeBy", "facetRowBy", "facetColBy"):
         assert defaults[key] == "" or defaults[key] in FKEYS
 
     # the two facet axes must not be the same factor, or the grid is a diagonal
     if defaults["facetRowBy"] and defaults["facetColBy"]:
         assert defaults["facetRowBy"] != defaults["facetColBy"]
     # nor may either be the x axis
-    assert defaults["depthAxis"] not in (defaults["facetRowBy"], defaults["facetColBy"])
+    assert defaults["depthAxis"] not in (defaults["facetRowBy"], defaults["facetColBy"],
+                                        defaults["shapeBy"])
 
     assert defaults["panelsPerRow"] == "auto" or 1 <= int(defaults["panelsPerRow"]) <= 4
     assert defaults["yScale"] in ("free", "row", "shared")

@@ -472,6 +472,48 @@ var EXTRA_COLUMNS = CONFIG.extraColumns || [];
 var XKEY = CONFIG.defaults.depthAxis || "layer";
 
 var SERIES = ["--s1","--s2","--s3","--s4","--s5","--s6","--s7","--s8"];
+
+// A second categorical channel, independent of colour: marker shape carries it
+// on the points and a matching dash pattern carries it on the line, so the
+// factor survives both a glance at the curve and a colourblind reading.
+var SHAPES = ["circle", "square", "triangle", "diamond", "triangleDown", "plus"];
+var DASHES = ["", "5 3", "2 2", "8 2 2 2", "1 3", "10 3"];
+
+function markerPoints(shape, cx, cy, r) {
+  var h = r * 0.88, t = r * 1.12, k = r * 0.38;
+  if (shape === "square") {
+    return [[cx - h, cy - h], [cx + h, cy - h], [cx + h, cy + h], [cx - h, cy + h]];
+  }
+  if (shape === "triangle") {
+    return [[cx, cy - t], [cx + t * 0.92, cy + t * 0.72], [cx - t * 0.92, cy + t * 0.72]];
+  }
+  if (shape === "triangleDown") {
+    return [[cx, cy + t], [cx + t * 0.92, cy - t * 0.72], [cx - t * 0.92, cy - t * 0.72]];
+  }
+  if (shape === "diamond") {
+    return [[cx, cy - t], [cx + t * 0.82, cy], [cx, cy + t], [cx - t * 0.82, cy]];
+  }
+  if (shape === "plus") {
+    return [[cx - k, cy - r], [cx + k, cy - r], [cx + k, cy - k], [cx + r, cy - k],
+            [cx + r, cy + k], [cx + k, cy + k], [cx + k, cy + r], [cx - k, cy + r],
+            [cx - k, cy + k], [cx - r, cy + k], [cx - r, cy - k], [cx - k, cy - k]];
+  }
+  return null;   // circle
+}
+
+function drawMarker(g, shape, cx, cy, r, fill, stroke, strokeWidth, opacity) {
+  var attrs = { fill: fill, stroke: stroke, "stroke-width": strokeWidth };
+  if (opacity !== 1) attrs.opacity = opacity;
+  var pts = markerPoints(shape, cx, cy, r);
+  if (!pts) {
+    attrs.cx = cx; attrs.cy = cy; attrs.r = r;
+    return el("circle", attrs, g);
+  }
+  attrs.points = pts.map(function (p) {
+    return p[0].toFixed(2) + "," + p[1].toFixed(2);
+  }).join(" ");
+  return el("polygon", attrs, g);
+}
 var SEQ = ["--q1","--q2","--q3","--q4","--q5","--q6","--q7","--q8","--q9","--q10","--q11","--q12","--q13"];
 
 function cssvar(name) {
@@ -521,6 +563,7 @@ var state = {
   view: "curves",
   filter: {},            // key -> {level:true}
   curveSeries: pickFactor(D.colourBy, 1),
+  curveShape: pickFacet(D.shapeBy),
   curveFacetRow: pickFacet(D.facetRowBy),
   curveFacetCol: pickFacet(D.facetColBy),
   curveWrap: D.panelsPerRow || "auto",
@@ -1406,6 +1449,45 @@ function conflictBanner(free, buttons) {
   return d;
 }
 
+// Marker glyphs beside their levels: identity by shape needs its own key, and
+// the swatches are drawn in ink rather than a series colour so the two channels
+// stay visually independent.
+function shapeLegendFor(key, levels) {
+  var wrap = document.createElement("div");
+  wrap.className = "legend";
+  var lab = document.createElement("span");
+  lab.className = "item";
+  lab.innerHTML = "<b style='color:var(--ink)'>" + escapeHtml(FLABEL[key]) + "</b>";
+  wrap.appendChild(lab);
+
+  levels.forEach(function (v, i) {
+    var it = document.createElement("span");
+    it.className = "item";
+    var svgns = "http://www.w3.org/2000/svg";
+    var mini = document.createElementNS(svgns, "svg");
+    mini.setAttribute("width", "26");
+    mini.setAttribute("height", "14");
+    mini.setAttribute("aria-hidden", "true");
+    mini.style.flex = "none";
+    var ink = cssvar("--ink-2");
+    el("line", { x1: 1, y1: 7, x2: 25, y2: 7, stroke: ink, "stroke-width": 2,
+                 "stroke-dasharray": DASHES[i % DASHES.length] || null }, mini);
+    drawMarker(mini, SHAPES[i % SHAPES.length], 13, 7, 4.2,
+               ink, cssvar("--surface"), 1.2, 1);
+    var t = document.createElement("span");
+    t.textContent = labelOf(key, v);
+    it.appendChild(mini); it.appendChild(t);
+    wrap.appendChild(it);
+  });
+  return wrap;
+}
+
+function shapeCapWarning(levels) {
+  if (levels.length <= SHAPES.length) return null;
+  return notice("Only the first " + SHAPES.length + " levels get a distinct shape. " +
+    "Narrow the filter, or move this factor onto a panel axis.", true);
+}
+
 function crossTargetWarning(rows) {
   var m = METRICS[state.metric];
   if (m.crossTarget) return null;
@@ -1446,6 +1528,10 @@ function viewCurves(rows) {
 
   opts.appendChild(makeSelect("Colour by", state.curveSeries, nonX,
     function (v) { state.curveSeries = v; render(); }));
+
+  // A second channel in the same panel: same cell, distinguishable runs.
+  opts.appendChild(makeSelect("Shape by", state.curveShape, facetChoices,
+    function (v) { state.curveShape = v; render(); }));
 
   // Picking a factor the other facet already holds swaps the two, rather than
   // putting the same factor on both axes and blanking every off-diagonal cell.
@@ -1504,8 +1590,15 @@ function viewCurves(rows) {
   var cap = seriesCapWarning(sLevels);
   if (cap) c.appendChild(cap);
 
+  var shKey = state.curveShape;
+  var shLevels = shKey ? levelsOf(shKey, rows) : [];
+  var shIdx = {};
+  shLevels.forEach(function (v, i) { shIdx[String(v)] = i; });
+  var shCap = shapeCapWarning(shLevels);
+  if (shCap) c.appendChild(shCap);
+
   var aggMode = state.aggregate;
-  var free = freeFactors(rows, [XKEY, sKey, rKey, cKey].filter(Boolean));
+  var free = freeFactors(rows, [XKEY, sKey, shKey, rKey, cKey].filter(Boolean));
   var freeKeys = free.map(function (f) { return f.key; });
 
   if (free.length) {
@@ -1530,6 +1623,9 @@ function viewCurves(rows) {
                      onClick: function () { assignFacet("col", f.key); } });
       buttons.push({ label: "Colour by " + FLABEL[f.key], onClick: function () {
         state.curveSeries = f.key; render();
+      }});
+      buttons.push({ label: "Shape by " + FLABEL[f.key], onClick: function () {
+        state.curveShape = f.key; render();
       }});
       buttons.push({ label: "Keep one " + FLABEL[f.key], onClick: function () {
         keepFirstLevel(f.key, rows);
@@ -1699,14 +1795,37 @@ function viewCurves(rows) {
     // CI bands are only legible on a handful.
     var seriesLines = sLevels.map(function (sv) {
       var srows = fr.filter(function (r) { return String(r[sKey]) === String(sv); });
-      if (aggMode !== "split" || !freeKeys.length) return srows.length ? [srows] : [];
-      var byCombo = {}, order = [];
-      srows.forEach(function (r) {
-        var k = comboKey(r, freeKeys);
-        if (!byCombo[k]) { byCombo[k] = []; order.push(k); }
-        byCombo[k].push(r);
+      if (!srows.length) return [];
+
+      // the shape channel first: these lines are meant to be told apart
+      var buckets;
+      if (shKey) {
+        var byShape = {}, sOrder = [];
+        srows.forEach(function (r) {
+          var k = String(r[shKey]);
+          if (!byShape[k]) { byShape[k] = []; sOrder.push(k); }
+          byShape[k].push(r);
+        });
+        buckets = sOrder.map(function (k) {
+          return { rows: byShape[k], shape: shIdx[k] || 0 };
+        });
+      } else {
+        buckets = [{ rows: srows, shape: 0 }];
+      }
+
+      // then, in split mode, by whatever no channel accounts for
+      if (aggMode !== "split" || !freeKeys.length) return buckets;
+      var out = [];
+      buckets.forEach(function (b) {
+        var byCombo = {}, order = [];
+        b.rows.forEach(function (r) {
+          var k = comboKey(r, freeKeys);
+          if (!byCombo[k]) { byCombo[k] = []; order.push(k); }
+          byCombo[k].push(r);
+        });
+        order.forEach(function (k) { out.push({ rows: byCombo[k], shape: b.shape }); });
       });
-      return order.map(function (k) { return byCombo[k]; });
+      return out;
     });
     var lineCount = seriesLines.reduce(function (a, ls) { return a + ls.length; }, 0);
     var showBands = lineCount <= 6;
@@ -1716,10 +1835,15 @@ function viewCurves(rows) {
       var colour = cssvar(SERIES[si % SERIES.length]);
       var lines = seriesLines[si];
       if (!lines.length) return;
-      var thin = lines.length > 1;
+      // Thin only the lines the channels do not already tell apart: with a
+      // shape factor set, one line per shape is meant to be read individually.
+      var thin = lines.length > (shKey ? Math.max(1, shLevels.length) : 1);
       var lastYs = [];
 
-      lines.forEach(function (crows) {
+      lines.forEach(function (line) {
+        var crows = line.rows;
+        var shape = SHAPES[line.shape % SHAPES.length];
+        var dash = DASHES[line.shape % DASHES.length];
         var pts = [];
         layers.forEach(function (L) {
           var group = crows.filter(function (r) { return String(r[XKEY]) === String(L); });
@@ -1763,7 +1887,9 @@ function viewCurves(rows) {
           if (segment.length > 1) {
             el("polyline", { points: segment.join(" "), fill: "none", stroke: colour,
                              "stroke-width": thin ? 1.4 : 2, opacity: thin ? 0.62 : 1,
-                             "stroke-linejoin": "round", "stroke-linecap": "round" }, g);
+                             "stroke-dasharray": dash || null,
+                             "stroke-linejoin": "round",
+                             "stroke-linecap": dash ? "butt" : "round" }, g);
           }
           segment = [];
         }
@@ -1779,9 +1905,8 @@ function viewCurves(rows) {
           if (p.collapsed) {
             mark = drawStar(g, cx, cy, p.rows.length);
           } else {
-            el("circle", { cx: cx, cy: cy, r: thin ? 3.2 : 4.5, fill: colour,
-                           stroke: cssvar("--surface"), "stroke-width": thin ? 1.2 : 2,
-                           opacity: thin ? 0.85 : 1 }, g);
+            drawMarker(g, shape, cx, cy, thin ? 3.4 : 4.6, colour,
+                       cssvar("--surface"), thin ? 1.2 : 2, thin ? 0.85 : 1);
             mark = el("circle", { cx: cx, cy: cy, r: 11, fill: "transparent",
                                   style: "cursor:pointer" }, g);
           }
@@ -1837,9 +1962,13 @@ function viewCurves(rows) {
   var facetPart = twoD ? "panels-" + rKey + "-x-" + cKey
                 : rKey ? "panelrows-" + rKey
                 : cKey ? "panels-" + cKey : "";
-  attachExport(c, "curves", ["by-" + XKEY, "colour-" + sKey, facetPart]);
+  attachExport(c, "curves", ["by-" + XKEY, "colour-" + sKey,
+                             shKey ? "shape-" + shKey : "", facetPart]);
 
   c.appendChild(legendFor(sKey, sLevels.slice(0, SERIES.length), "line"));
+  if (shKey && shLevels.length) {
+    c.appendChild(shapeLegendFor(shKey, shLevels.slice(0, SHAPES.length)));
+  }
 
   if (colsReduced) {
     c.appendChild(notice("Asked for " + askedCols + " panels per row, drew " + nCols +
@@ -1859,6 +1988,11 @@ function viewCurves(rows) {
       "a single run &mdash; a band over a collapsed mean would invent precision.");
   }
   notes.push("The <b>dashed red line</b> is " + METRICS[state.metric].label + " = 0.");
+  if (shKey) {
+    notes.push("<b>Shape</b> is a second channel alongside colour: marker shape and " +
+      "line dash both carry " + escapeHtml(FLABEL[shKey]) + ", so two factors share " +
+      "one panel without needing two panels.");
+  }
   notes.push("A <b>red star ★</b> marks a point several runs land on. " +
     "<i>Split</i> draws each run as its own line instead; <i>Break</i> refuses to " +
     "place a value at all; <i>Mean</i> and <i>Median</i> collapse but stay flagged.");

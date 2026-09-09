@@ -50,7 +50,24 @@ build_explorer("cgnn3d.html", runs=runs[runs.layer > 0])
 
 ## Laying out the depth curves
 
-The curves take a **panel grid**, set by two pickers:
+Four channels place a factor somewhere. Whatever is left over collides on one
+mark, and the page says so rather than averaging it (see below).
+
+| Channel | Control |
+|---|---|
+| x axis | `depthAxis` in `build.py` (layer) |
+| colour | **Colour by** |
+| marker shape + line dash | **Shape by** |
+| panel rows, panel columns | **Panel rows per**, **Panel columns per** |
+
+**Shape by** is a second channel inside the same panel: colour = GNN and shape =
+Probe puts twelve distinguishable curves in one cell without needing twelve
+panels. Shape carries on both the markers and the line dash, so it survives a
+greyscale print and a colourblind reading — it is the accessible way to add a
+factor. Six shapes are available; past that the page says only the first six are
+distinct and suggests moving the factor to a panel axis.
+
+The curves also take a **panel grid**, set by two pickers:
 
 - **Panel rows per** and **Panel columns per** — set both for a 2-D facet grid
   (rows = Target, columns = RMSD), the same anatomy as `plot_run_grid` in
@@ -176,10 +193,12 @@ the "CI clears baseline" stat follow. `higher_better=False` flips the ranking
 and the colour ramp; `cross_target=False` turns on the units warning.
 
 **A different opening view** — `DEFAULT_FILTER`, `DEFAULT_METRIC` and
-`DEFAULT_VIEW` at the top of `build.py`. `DEFAULT_VIEW` carries the depth-curve
-grid (`facetRowBy`, `facetColBy`, `panelsPerRow`, `yScale`) and the matrix axes;
-`""` is a valid facet, meaning "unset". A default naming something that is not
-present is ignored rather than producing a blank page.
+`DEFAULT_VIEW` at the top of `build.py`. `DEFAULT_VIEW` is grouped by tab: the
+depth curves own `depthAxis`, `colourBy`, `shapeBy`, `facetRowBy`, `facetColBy`,
+`panelsPerRow` and `yScale`; the coverage matrix owns `matrixRow`/`matrixCol`
+and reads none of the others. `""` means "channel off" and is valid for
+`shapeBy` and the two facets only — the matrix needs both its axes. A default
+naming something that is not present is ignored rather than blanking the page.
 
 **Layout, colour, copy** — `template.html`. The palette is defined once as CSS
 custom properties at the top and both themes are declared there; the categorical

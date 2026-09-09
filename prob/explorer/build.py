@@ -153,24 +153,37 @@ DEFAULT_FILTER: dict[str, list[str]] = {
 
 DEFAULT_METRIC = "r2"
 
-# Which factor sits where when the page first opens. Each must be a FACTORS key;
-# an unknown name falls back to a positional default rather than breaking a view.
+# Which factor sits where when the page first opens. Values must be FACTORS
+# keys. The two view groups below are independent -- the depth curves and the
+# coverage matrix each have their own axes, and neither reads the other's.
 DEFAULT_VIEW = {
-    "depthAxis": "layer",         # x axis of the depth curves
+    # ---- Depth curves tab -------------------------------------------------
+    # Four channels put a factor somewhere: the x axis, colour, marker shape,
+    # and the two panel-grid axes. Anything left over collides on one mark and
+    # the page says so rather than averaging it (see `aggregate`).
+    "depthAxis": "layer",         # x axis
     "colourBy": "gnn_model_type",
-    # Depth curves lay out as a panel grid: rows x columns. Leave one unset ("")
-    # for a single wrapped strip of panels, or set both for a 2-D facet grid.
+    "shapeBy": "",                # second channel in the same panel; "" = off
+    # The panel grid: rows x columns. Leave one unset ("") for a single wrapped
+    # strip of panels, or set both for a 2-D facet grid.
     "facetRowBy": "target",
     "facetColBy": "rmsd_threshold",
     "panelsPerRow": "auto",       # "auto" | 1..4; only used with one facet set
     "yScale": "free",             # "free" (per panel) | "row" | "shared"
+
+    # ---- Coverage matrix tab ---------------------------------------------
+    # Nothing to do with the depth-curve grid above: this is the heatmap's own
+    # pair of axes. Both are required -- a matrix with one axis is a list -- so
+    # "" is not meaningful here and falls back to the first factor.
+    "matrixRow": "target",
+    "matrixCol": "layer",
+
+    # ---- Both tabs --------------------------------------------------------
     # What to do when several runs land on one mark because a factor was left
-    # off every axis. "split" draws them separately and averages nothing;
+    # off every channel. "split" draws them separately and averages nothing;
     # "break" refuses to place a value; "mean"/"median" collapse but stay
     # flagged with a red star. Never silently averaged.
     "aggregate": "split",         # "split" | "mean" | "median" | "break"
-    "matrixRow": "",
-    "matrixCol": "layer",
 }
 
 
