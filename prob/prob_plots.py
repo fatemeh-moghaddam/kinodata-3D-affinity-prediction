@@ -666,3 +666,226 @@ def plot_joint_distribution(
 
     _save_and_show(g.figure, save_path, show)
     return {"pearson": pearson, "spearman": spearman, "n": len(data)}
+
+
+def _residualize(values: np.ndarray, confound: np.ndarray, degree: int = 1) -> tuple[np.ndarray, float]:
+    """Regress `values` on a polynomial in `confound`; return residuals and the fit R2.
+
+    degree=1 removes a linear trend, degree=2 a curved one. The residuals are what
+    is left of `values` once everything the confounder can explain is subtracted.
+    """
+    coeffs = np.polyfit(confound, values, deg=degree)
+    fitted = np.polyval(coeffs, confound)
+    residuals = values - fitted
+
+    ss_res = np.sum(np.square(residuals))
+    ss_tot = np.sum(np.square(values - values.mean()))
+    r2 = 1 - ss_res / ss_tot if ss_tot > 0 else np.nan
+    return residuals, r2
+
+
+def _confound_panel(
+    ax,
+    x: np.ndarray,
+    y: np.ndarray,
+    c: np.ndarray,
+    *,
+    style: str,
+    cmap: str,
+    norm,
+    gridsize: int,
+    mincnt: int,
+    subsample: Optional[int],
+    point_size: float,
+    alpha: float,
+    limit_percentiles: Optional[tuple[float, float]],
+):
+    """Draw one panel (points/hexes coloured by the confounder) plus its fit line.
+
+    Returns (mappable, linregress result, r_xc) where r_xc is the Pearson
+    correlation between the x values and the confounder -- the number the colour
+    gradient is showing.
+    """
+    res = linregress(x, y)
+    r_xc = float(np.corrcoef(x, c)[0, 1])
+
+    if style == "hex":
+        # Colour each bin by the MEDIAN confounder value inside it: overplotting
+        # cannot hide the gradient, and both panels stay on one colour scale.
+        mappable = ax.hexbin(
+            x, y, C=c,
+            reduce_C_function=np.median,
+            gridsize=gridsize,
+            mincnt=mincnt,
+            cmap=cmap,
+            norm=norm,
+            linewidths=0.0,
+        )
+    else:
+        idx = np.arange(len(x))
+        if subsample is not None and len(idx) > subsample:
+            idx = np.random.default_rng(0).choice(idx, size=subsample, replace=False)
+        else:
+            # shuffle so no confounder range is systematically painted on top
+            idx = np.random.default_rng(0).permutation(idx)
+        mappable = ax.scatter(
+            x[idx], y[idx], c=c[idx],
+            cmap=cmap, norm=norm,
+            s=point_size, alpha=alpha, edgecolor="none", rasterized=True,
+        )
+
+    # Trim the view to the bulk of the data: a handful of extreme scores would
+    # otherwise leave most of the panel empty and stretch the fit line past it.
+    if limit_percentiles is not None:
+        for setter, values in ((ax.set_xlim, x), (ax.set_ylim, y)):
+            lo, hi = np.percentile(values, limit_percentiles)
+            pad = 0.04 * (hi - lo)
+            setter(lo - pad, hi + pad)
+
+    xs = np.array(ax.get_xlim())
+    ax.plot(xs, res.intercept + res.slope * xs, color="crimson", lw=2, zorder=5)
+    ax.set_xlim(*xs)
+    return mappable, res, r_xc
+
+
+def plot_confound_residualization(
+    df: pd.DataFrame,
+    score_col: str,
+    y_col: str = "y_processed",
+    confound_col: str = "mw",
+    *,
+    degree: int = 1,
+    style: str = "auto",
+    subsample: Optional[int] = 20_000,
+    gridsize: int = 45,
+    mincnt: int = 15,
+    cmap: str = "viridis",
+    clim_percentiles: tuple[float, float] = (10, 90),
+    limit_percentiles: Optional[tuple[float, float]] = (0.5, 99.5),
+    point_size: float = 8.0,
+    alpha: float = 0.45,
+    score_label: Optional[str] = None,
+    y_label: Optional[str] = None,
+    confound_label: Optional[str] = None,
+    title: Optional[str] = None,
+    save_path: Optional[Path] = None,
+    show: bool = True,
+) -> dict[str, float]:
+    """Show a confound and then remove it, side by side, from one dataframe.
+
+    Left panel: `score_col` vs `y_col`, every point coloured by `confound_col`.
+    If the score is largely a proxy for the confounder, the colour drifts along
+    the trend line -- the confound is visible in the picture, not just in a table.
+
+    Right panel: the same plot after residualizing BOTH axes on the confounder
+    (Frisch-Waugh-Lovell). The colour gradient collapses, and the slope that
+    survives is the partial effect of the score on affinity at fixed confounder --
+    i.e. the coefficient the score would get in `y ~ score + confound`.
+
+    Args:
+        score_col / y_col / confound_col: columns of one dataframe, e.g.
+            "weighted_hb_score" / "y_processed" / "mw".
+        degree: polynomial degree used to regress out the confounder (1 = linear).
+        style: "scatter" (points), "hex" (bins coloured by median confounder),
+            or "auto" -> hex above 5000 rows, where points would overplot.
+        subsample: cap on plotted points in scatter style (the statistics always
+            use every row).
+        mincnt: hex bins with fewer rows than this are dropped -- their median
+            confounder value is noise and would speckle the panel.
+        clim_percentiles: robust colour limits, so a few extreme confounder
+            values cannot flatten the gradient.
+        limit_percentiles: robust axis limits (None keeps the full range).
+
+    Returns:
+        Correlations/slopes before and after, plus `r_score_confound_*`, which
+        quantifies the gradient each panel shows.
+
+    Example:
+        plot_confound_residualization(
+            bond_scores,
+            score_col="bond_score_sigmoid",
+            confound_col="mw",
+            save_path=figures_dir / "hb_score_mw_confound",
+        )
+    """
+    data = df[[score_col, y_col, confound_col]].dropna()
+    if len(data) < 3:
+        raise ValueError(
+            f"Need at least 3 complete rows for {score_col}/{y_col}/{confound_col}, got {len(data)}"
+        )
+
+    x = data[score_col].to_numpy(float)
+    y = data[y_col].to_numpy(float)
+    c = data[confound_col].to_numpy(float)
+
+    if style == "auto":
+        style = "hex" if len(data) > 5_000 else "scatter"
+    if style not in {"hex", "scatter"}:
+        raise ValueError(f"style must be 'hex', 'scatter' or 'auto', got {style!r}")
+
+    x_res, x_r2 = _residualize(x, c, degree)
+    y_res, y_r2 = _residualize(y, c, degree)
+
+    # one colour scale for both panels, so the two gradients are comparable
+    vmin, vmax = np.percentile(c, clim_percentiles)
+    norm = plt.Normalize(vmin=vmin, vmax=vmax)
+
+    score_label = score_label or score_col
+    y_label = y_label or y_col
+    confound_label = confound_label or confound_col
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4.8), layout="constrained")
+
+    panel_kws = dict(
+        style=style, cmap=cmap, norm=norm, gridsize=gridsize, mincnt=mincnt,
+        subsample=subsample, point_size=point_size, alpha=alpha,
+        limit_percentiles=limit_percentiles,
+    )
+    mappable, res_raw, r_xc_raw = _confound_panel(axes[0], x, y, c, **panel_kws)
+    _, res_adj, r_xc_adj = _confound_panel(axes[1], x_res, y_res, c, **panel_kws)
+
+    axes[0].set_xlabel(score_label)
+    axes[0].set_ylabel(y_label)
+    axes[0].set_title(f"Raw: coloured by {confound_label}")
+
+    axes[1].set_xlabel(f"{score_label}  |  {confound_label} removed")
+    axes[1].set_ylabel(f"{y_label}  |  {confound_label} removed")
+    axes[1].set_title(f"Residualized on {confound_label}" + ("" if degree == 1 else f" (degree {degree})"))
+    axes[1].axhline(0, color="0.35", lw=0.8, ls="--", alpha=0.7, zorder=4)
+    axes[1].axvline(0, color="0.35", lw=0.8, ls="--", alpha=0.7, zorder=4)
+
+    for ax, res, r_xc in ((axes[0], res_raw, r_xc_raw), (axes[1], res_adj, r_xc_adj)):
+        ax.text(
+            0.03, 0.97,
+            f"n = {len(data):,}\n"
+            f"slope = {res.slope:.3f}\n"
+            f"Pearson = {res.rvalue:.3f}\n"
+            f"r(x, {confound_label}) = {r_xc:.3f}",
+            transform=ax.transAxes, ha="left", va="top", fontsize=9,
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="darkgray"),
+        )
+
+    cbar = fig.colorbar(mappable, ax=axes, fraction=0.035, pad=0.02, extend="both")
+    cbar.set_label(
+        confound_label if style == "scatter" else f"{confound_label} (bin median)"
+    )
+
+    fig.suptitle(
+        title or f"{y_label} vs {score_label}: {confound_label} as confounder"
+    )
+
+    _save_and_show(fig, save_path, show)
+
+    return {
+        "n": len(data),
+        "slope_raw": float(res_raw.slope),
+        "pearson_raw": float(res_raw.rvalue),
+        "p_raw": float(res_raw.pvalue),
+        "slope_partial": float(res_adj.slope),
+        "pearson_partial": float(res_adj.rvalue),
+        "p_partial": float(res_adj.pvalue),
+        "r_score_confound_raw": r_xc_raw,
+        "r_score_confound_resid": r_xc_adj,
+        f"r2_{score_col}_on_{confound_col}": float(x_r2),
+        f"r2_{y_col}_on_{confound_col}": float(y_r2),
+    }
