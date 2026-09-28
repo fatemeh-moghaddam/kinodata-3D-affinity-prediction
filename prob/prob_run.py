@@ -17,11 +17,16 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 from sklearn.base import clone
-from sklearn.model_selection import GridSearchCV, KFold, train_test_split
+from sklearn.model_selection import GridSearchCV, KFold
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from prob.paths_and_io import EXP_DIR_ARTIFACTS, EXP_DIR_FIGURES, EXP_DIR_REPORTS
+from prob.paths_and_io import (
+    EXP_DIR_ARTIFACTS,
+    EXP_DIR_FIGURES,
+    EXP_DIR_REPORTS,
+    get_data_dir,
+)
 from prob.prob_metrics import evaluate_predictions, regression_scorers
 from prob.prob_plots import plot_parity, plot_residuals
 from prob.prob_stats import run_probe_statistical_tests
@@ -31,6 +36,144 @@ from prob.prob_stats import run_probe_statistical_tests
 DEFAULT_TEST_SIZE = 0.1
 DEFAULT_N_SPLITS_CV = 5
 DEFAULT_REFIT = "r2"
+DEFAULT_PROBE_SPLIT_SEED = 0
+#: split_by_ident raises if a condition's test fraction is further than this
+#: from the file's overall test fraction (absolute, e.g. 0.01 -> 9-11% for 10%).
+MAX_TEST_FRACTION_DEVIATION = 0.01
+#: Columns: ident, probe_split ("train" / "test"). One fixed assignment for every
+#: model, split type, RMSD cutoff and layer.
+PROBE_SPLIT_FILENAME = "probe_split.csv"
+
+
+# ─────────────────────────────────────────────────────────────
+# Fixed probe train/test assignment by ident
+# ─────────────────────────────────────────────────────────────
+
+
+def default_probe_split_path() -> Path:
+    return get_data_dir(prob=True) / PROBE_SPLIT_FILENAME
+
+
+def catalogue_idents(catalogue_path: Optional[Path] = None) -> np.ndarray:
+    """
+    Every ident in the unfiltered KinodataDocked dataset (~119.5k), read from
+    data/ident_to_activity_id.csv. Each RMSD cutoff's dataset is a subset of it,
+    so an assignment built from this covers every condition.
+    """
+    path = (
+        Path(catalogue_path)
+        if catalogue_path is not None
+        else get_data_dir(prob=False) / "ident_to_activity_id.csv"
+    )
+    return pd.read_csv(path, usecols=["ident_processed"])["ident_processed"].to_numpy()
+
+
+def make_probe_split(
+    all_idents: np.ndarray,
+    path: Optional[Path] = None,
+    *,
+    test_size: float = DEFAULT_TEST_SIZE,
+    random_state: int = DEFAULT_PROBE_SPLIT_SEED,
+    overwrite: bool = False,
+) -> pd.DataFrame:
+    """
+    Pick test_size of `all_idents` at random as the probe test set and save the
+    assignment. Build it from the full (least filtered) set of idents: an ident
+    that is not in the file cannot be split later (split_by_ident raises).
+
+    Refuses to overwrite an existing file unless overwrite=True, since changing
+    the assignment makes earlier runs incomparable with new ones.
+    """
+    path = Path(path) if path is not None else default_probe_split_path()
+    if path.exists() and not overwrite:
+        raise FileExistsError(f"{path} already exists; pass overwrite=True to replace it")
+
+    idents = np.unique(np.asarray(all_idents).astype(int))
+    rng = np.random.default_rng(random_state)
+    n_test = int(round(test_size * len(idents)))
+    test_idents = rng.choice(idents, size=n_test, replace=False)
+
+    split_df = pd.DataFrame({
+        "ident": idents,
+        "probe_split": np.where(np.isin(idents, test_idents), "test", "train"),
+    })
+    path.parent.mkdir(parents=True, exist_ok=True)
+    split_df.to_csv(path, index=False)
+    return split_df
+
+
+def load_probe_split(
+    path: Optional[Path] = None,
+    *,
+    test_size: float = DEFAULT_TEST_SIZE,
+) -> pd.DataFrame:
+    """
+    Load the saved assignment. On first use (no file yet) it is built from the
+    full dataset catalogue (`catalogue_idents`) and saved, so all later runs reuse
+    the same one. test_size is only used for that first build.
+    """
+    path = Path(path) if path is not None else default_probe_split_path()
+    if not path.exists():
+        make_probe_split(catalogue_idents(), path, test_size=test_size)
+    return pd.read_csv(path)
+
+
+def split_by_ident(
+    X: np.ndarray,
+    y: np.ndarray,
+    idents: np.ndarray,
+    probe_split: pd.DataFrame,
+    max_fraction_deviation: float = MAX_TEST_FRACTION_DEVIATION,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Split (X, y) by looking up each row's ident in `probe_split`. `idents` must
+    be aligned row-for-row with X and y (the run's ids.pt, masked like X and y).
+    Each side is sorted by ident, so CV folds inside tuning and the saved
+    predictions do not depend on the row order of the run either.
+
+    The test labels are random over the whole dataset, so any large subset gets
+    close to the same test fraction (RMSD <= 2: 9.97% for a 10% file). A subset
+    that lands further than `max_fraction_deviation` away -- small, or selected
+    in a way that correlates with the labels -- raises instead of silently
+    probing on a skewed split.
+
+    Returns (X_train, X_test, y_train, y_test, ids_train, ids_test).
+    """
+    idents = np.asarray(idents).astype(int)
+    if not (len(idents) == len(X) == len(y)):
+        raise ValueError(
+            f"idents ({len(idents)}), X ({len(X)}) and y ({len(y)}) must have the same length"
+        )
+
+    unknown = ~np.isin(idents, probe_split["ident"].to_numpy())
+    if unknown.any():
+        raise ValueError(
+            f"{unknown.sum()} idents are not in the probe split file "
+            f"(e.g. {idents[unknown][:5].tolist()}); rebuild it with make_probe_split "
+            "from the full set of idents"
+        )
+
+    test_idents = probe_split.loc[probe_split["probe_split"] == "test", "ident"].to_numpy()
+    is_test = np.isin(idents, test_idents)
+
+    expected_fraction = len(test_idents) / len(probe_split)
+    test_fraction = is_test.mean()
+    if abs(test_fraction - expected_fraction) > max_fraction_deviation:
+        raise ValueError(
+            f"Probe test fraction is {test_fraction:.3f} ({is_test.sum()}/{len(idents)}), "
+            f"expected {expected_fraction:.3f} +/- {max_fraction_deviation}. The subset is "
+            "too small or not independent of the probe split labels."
+        )
+
+    train_idx = np.flatnonzero(~is_test)
+    test_idx = np.flatnonzero(is_test)
+    train_idx = train_idx[np.argsort(idents[train_idx], kind="stable")]
+    test_idx = test_idx[np.argsort(idents[test_idx], kind="stable")]
+    return (
+        X[train_idx], X[test_idx],
+        y[train_idx], y[test_idx],
+        idents[train_idx], idents[test_idx],
+    )
 
 
 def _make_pipeline(estimator: Any) -> Pipeline:
@@ -123,21 +266,27 @@ def run_probe(
     X_test: Optional[np.ndarray] = None,
     y_train: Optional[np.ndarray] = None,
     y_test: Optional[np.ndarray] = None,
+    idents: Optional[np.ndarray] = None,
+    ids_test: Optional[np.ndarray] = None,
 ) -> Tuple[Dict[str, Any], np.ndarray, Dict[str, Dict[str, Any]]]:
     """
     Fit a single probe pipeline on train data, predict on test, compute metrics
     and (optionally) bootstrap CIs for R² and RMSE, then save artifacts.
 
     If X_train, X_test, y_train, y_test are provided, use that split and do not
-    split (X, y). Otherwise split (X, y) with test_size and random_state.
+    split (X, y); pass ids_test to record test idents in the predictions CSV.
+    Otherwise split (X, y) by `idents` with the saved probe split
+    (`load_probe_split`); test_size only matters if that file does not exist yet.
 
     Returns (metrics, y_pred, statistical_tests).
     """
     if X_train is not None and X_test is not None and y_train is not None and y_test is not None:
         pass  # use provided split
     else:
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
+        if idents is None:
+            raise ValueError("idents are required to split (X, y) into probe train/test")
+        X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
+            X, y, idents, load_probe_split(test_size=test_size)
         )
 
     # Build pipeline: if estimator is already a pipeline with "model" step, use it; else wrap
@@ -172,6 +321,7 @@ def run_probe(
             X=X_train if X_train is not None else X,
             exp_dirs=exp_dirs,
             model_name=model_name,
+            ids_test=ids_test,
         )
 
     return metrics, y_pred, statistical_tests
@@ -185,6 +335,7 @@ def _write_run_artifacts(
     X: np.ndarray,
     exp_dirs: Dict[str, Path],
     model_name: str,
+    ids_test: Optional[np.ndarray] = None,
 ) -> None:
     """Write evaluation outputs: predictions CSV, summary JSON (with stats), and figures."""
     artifacts_dir = exp_dirs.get(EXP_DIR_ARTIFACTS)
@@ -193,6 +344,8 @@ def _write_run_artifacts(
 
     if artifacts_dir is not None:
         pred_df = pd.DataFrame({"y_true": y_test, "y_pred": y_pred})
+        if ids_test is not None:
+            pred_df.insert(0, "ident", ids_test)
         pred_df.to_csv(artifacts_dir / f"{model_name}_predictions.csv", index=False)
 
     if reports_dir is not None:
@@ -234,6 +387,7 @@ def run_cv_search(
     prob_model: Any,
     param_grid: Dict[str, Any],
     *,
+    idents: np.ndarray,
     n_splits: int = DEFAULT_N_SPLITS_CV,
     test_size: float = DEFAULT_TEST_SIZE,
     random_state: int,
@@ -246,11 +400,17 @@ def run_cv_search(
     confidence: float = 0.95,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
+    probe_split_path: Optional[Path] = None,
 ) -> Tuple[Any, Dict[str, Any], np.ndarray]:
     """
     Tune hyperparameters on a train split, then run the best estimator on the
     same split's test set (refit best pipeline on train, predict on test),
     compute metrics and statistical tests, and write all artifacts.
+
+    The probe train/test split looks up each row's ident (`idents`, aligned
+    row-for-row with X and y) in the saved probe split file, so every model,
+    split type, RMSD cutoff and layer is tested on the same idents. test_size
+    only matters if that file does not exist yet.
 
     Saves: tuning (cv_results, best_params) and run (predictions, summary with
     statistical_tests, figures). Returns (search, metrics, y_pred).
@@ -259,8 +419,8 @@ def run_cv_search(
     best params exist (writing only run artifacts). This is intended for
     running many similar experiments without re-tuning.
     """
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state
+    X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
+        X, y, idents, load_probe_split(probe_split_path, test_size=test_size)
     )
 
     class _BestParamsOnly:
@@ -333,6 +493,7 @@ def run_cv_search(
             X_test=X_test,
             y_train=y_train,
             y_test=y_test,
+            ids_test=ids_test,
         )
         search = _BestParamsOnly(loaded_best_params)
         return search, metrics, y_pred
@@ -375,6 +536,7 @@ def run_cv_search(
         X_test=X_test,
         y_train=y_train,
         y_test=y_test,
+        ids_test=ids_test,
     )
 
     return search, metrics, y_pred
