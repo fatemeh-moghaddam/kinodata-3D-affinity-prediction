@@ -19,7 +19,7 @@ import pandas as pd
 
 import kinodata.configuration as cfg
 
-from prob.paths_and_io import get_exp_dirs, load_X_from_pt, load_y_by_ids
+from prob.paths_and_io import get_exp_dirs, load_out_tensor, load_X_from_pt, load_y_by_ids
 from prob.prob_config import get_ds_load_config
 from prob.prob_run import run_cv_search, run_probe, tune_probe
 
@@ -98,6 +98,7 @@ def run_probes(
     prob_config: cfg.Config,
     X: np.ndarray,
     y: np.ndarray,
+    idents: np.ndarray,
     probe_entries: List[Dict[str, Any]],
     n_jobs: int,
     layer_num: int,
@@ -109,6 +110,9 @@ def run_probes(
     For each probe entry: if param_grid is present, tune then run (best estimator)
     and write tuning + run artifacts (including statistical_tests in summary).
     If param_grid is missing or empty, run_probe only with the given estimator.
+
+    `idents` is aligned row-for-row with X and y; the probe train/test split
+    is looked up by ident (see prob_run.split_by_ident).
     """
     target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
     layer = layer_num
@@ -131,6 +135,7 @@ def run_probes(
         if param_grid:
             search, metrics, _ = run_cv_search(
                 X, y, estimator, param_grid,
+                idents=idents,
                 n_splits=N_SPLITS_CV,
                 test_size=TEST_SIZE,
                 random_state=RANDOM_STATE,
@@ -150,6 +155,7 @@ def run_probes(
         else:
             metrics, _, _ = run_probe(
                 X, y, estimator,
+                idents=idents,
                 test_size=TEST_SIZE,
                 random_state=RANDOM_STATE,
                 exp_dirs=exp_dirs,
@@ -172,6 +178,7 @@ def linear_models(
     prob_config: cfg.Config,
     X: np.ndarray,
     y: np.ndarray,
+    idents: np.ndarray,
     layer_num: int,
     n_jobs: int = -1,
     reuse_best_params: bool = False,
@@ -185,6 +192,7 @@ def linear_models(
         prob_config,
         X,
         y,
+        idents,
         LINEAR_PROBES,
         n_jobs,
         layer_num=layer_num,
@@ -197,6 +205,7 @@ def linear_models(
 def linear_models_shuffled_ident_baseline(
     prob_config: cfg.Config,
     X: np.ndarray,
+    idents: np.ndarray,
     layer_num: int,
     *,
     n_jobs: int = -1,
@@ -210,7 +219,8 @@ def linear_models_shuffled_ident_baseline(
     Run linear probes on a shuffled-ident baseline target assignment.
 
     This permutes id->target mapping before loading y, producing a random-label
-    control with the same marginal target distribution.
+    control with the same marginal target distribution. `idents` are the real
+    (unshuffled) row idents from ids.pt: only y is shuffled, X rows keep theirs.
     """
     if n_jobs == -1:
         n_jobs = _cpu_budget()
@@ -229,6 +239,7 @@ def linear_models_shuffled_ident_baseline(
         prob_config,
         X,
         y_shuffled,
+        idents,
         layer_num=layer_num,
         n_jobs=n_jobs,
         reuse_best_params=reuse_best_params,
@@ -259,6 +270,7 @@ def non_linear_models(
     prob_config: cfg.Config,
     X: np.ndarray,
     y: np.ndarray,
+    idents: np.ndarray,
     layer_num: int,
     n_jobs: int = -1,
     reuse_best_params: bool = False,
@@ -273,6 +285,7 @@ def non_linear_models(
         prob_config,
         X,
         y,
+        idents,
         probe_entries if probe_entries is not None else NONLINEAR_PROBES,
         n_jobs,
         layer_num=layer_num,
@@ -417,6 +430,12 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
         return_mask=True,
     )
 
+    # Real idents of the rows of X (same order as ids.pt, which load_y_by_ids and
+    # load_X_from_pt both follow). The probe train/test split is looked up by these,
+    # so they must be masked exactly like X and y. The shuffled baseline also uses
+    # them unshuffled: only its y is permuted, X rows keep their own idents.
+    idents = load_out_tensor(prob_config.output_dir, "ids.pt").detach().cpu().numpy().astype(int)
+
     if run_shuffled_baseline:
         y_shuffled, valid_mask_shuffled = load_y_by_ids(
             prob_config.output_dir,
@@ -436,6 +455,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     prob_config,
                     X[valid_mask],
                     y[valid_mask],
+                    idents[valid_mask],
                     layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
@@ -448,6 +468,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     prob_config,
                     X[valid_mask],
                     y[valid_mask],
+                    idents[valid_mask],
                     layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
@@ -463,6 +484,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         prob_config,
                         X[valid_mask_shuffled],
                         y_shuffled[valid_mask_shuffled],
+                        idents[valid_mask_shuffled],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
@@ -476,6 +498,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         prob_config,
                         X[valid_mask_shuffled],
                         y_shuffled[valid_mask_shuffled],
+                        idents[valid_mask_shuffled],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
