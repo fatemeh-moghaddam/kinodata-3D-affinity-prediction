@@ -131,6 +131,8 @@ METRICS: list[Metric] = [
     Metric("rmse", "RMSE", higher_better=False, cross_target=False, decimals=3,
            ci_lower="rmse_ci_lower", ci_upper="rmse_ci_upper"),
     Metric("mae", "MAE", higher_better=False, cross_target=False, decimals=3),
+    Metric("pearson", "Pearson r", decimals=3,
+           ci_lower="pearson_ci_lower", ci_upper="pearson_ci_upper"),
 ]
 
 EXTRA_COLUMNS: list[Column] = [

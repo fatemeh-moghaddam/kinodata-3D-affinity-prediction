@@ -13,18 +13,26 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.metrics import make_scorer
 
 
+def pearson(y_true: np.ndarray, y_pred: np.ndarray) -> float:
+    """Pearson r. NaN if either side is constant (can happen in a bootstrap resample)."""
+    if np.std(y_true) == 0 or np.std(y_pred) == 0:
+        return float("nan")
+    return float(np.corrcoef(y_true, y_pred)[0, 1])
+
+
 def evaluate_predictions(y_true: np.ndarray, y_pred: np.ndarray) -> Dict[str, float]:
-    """Compute R², RMSE, and MAE. Useful for reporting and downstream stats."""
+    """Compute R², RMSE, MAE and Pearson r. Useful for reporting and downstream stats."""
     rmse = float(np.sqrt(mean_squared_error(y_true, y_pred)))
     mae = float(mean_absolute_error(y_true, y_pred))
     r2 = float(r2_score(y_true, y_pred))
-    return {"r2": r2, "rmse": rmse, "mae": mae}
+    return {"r2": r2, "rmse": rmse, "mae": mae, "pearson": pearson(y_true, y_pred)}
 
 
 def regression_scorers() -> Dict[str, Any]:
     """Scorers for GridSearchCV (refit on r2, lower is better for neg_*)."""
     return {
         "r2": make_scorer(r2_score),
+        "pearson": make_scorer(pearson),
         "neg_rmse": make_scorer(
             lambda y_true, y_pred: np.sqrt(mean_squared_error(y_true, y_pred)),
             greater_is_better=False,
