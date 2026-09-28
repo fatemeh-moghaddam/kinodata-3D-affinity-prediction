@@ -9,6 +9,7 @@ Tuning (GridSearchCV) and running (fit + evaluate + stats) for probe models.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from pathlib import Path
@@ -100,6 +101,13 @@ def make_probe_split(
     path.parent.mkdir(parents=True, exist_ok=True)
     split_df.to_csv(path, index=False)
     return split_df
+
+
+def probe_split_provenance(path: Optional[Path] = None) -> Dict[str, str]:
+    """Path and sha256 of the probe split file, recorded in every run summary so a
+    result can be traced to the exact train/test assignment it used."""
+    path = Path(path) if path is not None else default_probe_split_path()
+    return {"file": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
 
 
 def load_probe_split(
@@ -268,13 +276,15 @@ def run_probe(
     y_test: Optional[np.ndarray] = None,
     idents: Optional[np.ndarray] = None,
     ids_test: Optional[np.ndarray] = None,
+    probe_split_info: Optional[Dict[str, str]] = None,
 ) -> Tuple[Dict[str, Any], np.ndarray, Dict[str, Dict[str, Any]]]:
     """
     Fit a single probe pipeline on train data, predict on test, compute metrics
-    and (optionally) bootstrap CIs for R² and RMSE, then save artifacts.
+    and (optionally) bootstrap CIs for every metric, then save artifacts.
 
     If X_train, X_test, y_train, y_test are provided, use that split and do not
-    split (X, y); pass ids_test to record test idents in the predictions CSV.
+    split (X, y); pass ids_test to record test idents in the predictions CSV and
+    probe_split_info (`probe_split_provenance`) to record the split in the summary.
     Otherwise split (X, y) by `idents` with the saved probe split
     (`load_probe_split`); test_size only matters if that file does not exist yet.
 
@@ -288,6 +298,7 @@ def run_probe(
         X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
             X, y, idents, load_probe_split(test_size=test_size)
         )
+        probe_split_info = probe_split_provenance()
 
     # Build pipeline: if estimator is already a pipeline with "model" step, use it; else wrap
     if hasattr(estimator, "steps") and isinstance(estimator, Pipeline):
@@ -318,10 +329,15 @@ def run_probe(
             statistical_tests=statistical_tests,
             y_test=y_test,
             y_pred=y_pred,
-            X=X_train if X_train is not None else X,
+            X_train=X_train,
             exp_dirs=exp_dirs,
             model_name=model_name,
             ids_test=ids_test,
+            bootstrap_settings=(
+                {"n_bootstrap": n_bootstrap, "confidence": confidence, "random_state": random_state}
+                if run_stats else None
+            ),
+            probe_split_info=probe_split_info,
         )
 
     return metrics, y_pred, statistical_tests
@@ -332,10 +348,12 @@ def _write_run_artifacts(
     statistical_tests: Dict[str, Dict[str, Any]],
     y_test: np.ndarray,
     y_pred: np.ndarray,
-    X: np.ndarray,
+    X_train: np.ndarray,
     exp_dirs: Dict[str, Path],
     model_name: str,
     ids_test: Optional[np.ndarray] = None,
+    bootstrap_settings: Optional[Dict[str, Any]] = None,
+    probe_split_info: Optional[Dict[str, str]] = None,
 ) -> None:
     """Write evaluation outputs: predictions CSV, summary JSON (with stats), and figures."""
     artifacts_dir = exp_dirs.get(EXP_DIR_ARTIFACTS)
@@ -352,12 +370,17 @@ def _write_run_artifacts(
         summary = {
             "model": model_name,
             "metrics_on_unseen_data": metrics,
-            "n_samples": int(X.shape[0]),
+            "n_samples": int(X_train.shape[0] + len(y_test)),
+            "n_train_samples": int(X_train.shape[0]),
             "n_test_samples": int(len(y_test)),
-            "n_features": int(X.shape[1]),
+            "n_features": int(X_train.shape[1]),
         }
         if statistical_tests:
             summary["statistical_tests"] = statistical_tests
+            if bootstrap_settings is not None:
+                summary["bootstrap"] = bootstrap_settings
+        if probe_split_info is not None:
+            summary["probe_split"] = probe_split_info
         with open(reports_dir / f"{model_name}_summary.json", "w") as f:
             json.dump(summary, f, indent=2)
 
@@ -422,6 +445,7 @@ def run_cv_search(
     X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
         X, y, idents, load_probe_split(probe_split_path, test_size=test_size)
     )
+    probe_split_info = probe_split_provenance(probe_split_path)
 
     class _BestParamsOnly:
         """Minimal stand-in so callers can still use `.best_params_`."""
@@ -494,6 +518,7 @@ def run_cv_search(
             y_train=y_train,
             y_test=y_test,
             ids_test=ids_test,
+            probe_split_info=probe_split_info,
         )
         search = _BestParamsOnly(loaded_best_params)
         return search, metrics, y_pred
@@ -537,6 +562,7 @@ def run_cv_search(
         y_train=y_train,
         y_test=y_test,
         ids_test=ids_test,
+        probe_split_info=probe_split_info,
     )
 
     return search, metrics, y_pred
