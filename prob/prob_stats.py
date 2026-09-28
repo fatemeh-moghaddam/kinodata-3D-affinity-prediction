@@ -13,18 +13,11 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-from prob.prob_metrics import evaluate_predictions
+from prob.prob_metrics import evaluate_predictions, pearson
 
 
 def _rmse(y: np.ndarray, y_pred: np.ndarray) -> float:
     return float(np.sqrt(mean_squared_error(y, y_pred)))
-
-
-def _pearson(y: np.ndarray, y_pred: np.ndarray) -> float:
-    # Undefined if either side is constant (can happen in a bootstrap resample).
-    if np.std(y) == 0 or np.std(y_pred) == 0:
-        return float("nan")
-    return float(np.corrcoef(y, y_pred)[0, 1])
 
 
 # Metrics bootstrapped everywhere in this module: short name -> fn(y_true, y_pred).
@@ -32,8 +25,44 @@ METRIC_FNS: Dict[str, Callable[[np.ndarray, np.ndarray], float]] = {
     "r2": r2_score,
     "rmse": _rmse,
     "mae": mean_absolute_error,
-    "pearson": _pearson,
+    "pearson": pearson,
 }
+
+
+def align_predictions_on_ident(
+    predictions: Dict[str, pd.DataFrame],
+) -> Dict[str, tuple]:
+    """
+    Pair conditions on the molecules they were tested on.
+
+    `predictions` maps condition name -> a predictions CSV as a DataFrame with
+    ident, y_true and y_pred columns (see paths_and_io.load_run_predictions_frame).
+    Keeps the idents every condition has, sorted by ident, and returns
+    {name: (y_true, y_pred)} ready for compare_two_conditions /
+    compare_multiple_conditions. Raises if a shared ident has a different y_true
+    in two conditions, i.e. they are not the same target.
+    """
+    frames = {}
+    for name, df in predictions.items():
+        if "ident" not in df.columns:
+            raise ValueError(f"'{name}' has no ident column; rerun its probe to pair by ident")
+        frames[name] = df.set_index("ident")[["y_true", "y_pred"]]
+
+    shared = sorted(set.intersection(*(set(df.index) for df in frames.values())))
+    if not shared:
+        raise ValueError("The conditions share no test idents")
+
+    aligned = {name: df.loc[shared] for name, df in frames.items()}
+    reference_name, reference = next(iter(aligned.items()))
+    for name, df in aligned.items():
+        if not np.allclose(df["y_true"].to_numpy(), reference["y_true"].to_numpy(), equal_nan=True):
+            raise ValueError(
+                f"y_true differs between '{reference_name}' and '{name}' for the same idents"
+            )
+    return {
+        name: (df["y_true"].to_numpy(), df["y_pred"].to_numpy())
+        for name, df in aligned.items()
+    }
 
 
 def bootstrap_ci(

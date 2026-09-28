@@ -339,6 +339,21 @@ def load_run_predictions(run) -> tuple[np.ndarray, np.ndarray]:
     return df["y_true"].to_numpy(float), df["y_pred"].to_numpy(float)
 
 
+def load_run_predictions_frame(run) -> pd.DataFrame:
+    """The whole predictions CSV for one run (ident, y_true, y_pred), for pairing
+    conditions by ident with prob_stats.align_predictions_on_ident.
+
+    Accepts the same inputs as `load_run_predictions`.
+    """
+    if isinstance(run, (str, Path)):
+        path = Path(run)
+    elif isinstance(run, Mapping):
+        path = Path(run["predictions_path"])
+    else:  # Series / namedtuple from .itertuples()
+        path = Path(run.predictions_path)
+    return pd.read_csv(path)
+
+
 def attach_run_metrics(runs: pd.DataFrame) -> pd.DataFrame:
     """Add the metrics each run already wrote to reports/<probe>_summary.json.
 
@@ -360,7 +375,7 @@ def attach_run_metrics(runs: pd.DataFrame) -> pd.DataFrame:
             except json.JSONDecodeError:
                 payload = {}
             record.update(payload.get("metrics_on_unseen_data", {}))
-            for key in ("n_samples", "n_test_samples", "n_features"):
+            for key in ("n_samples", "n_train_samples", "n_test_samples", "n_features"):
                 if key in payload:
                     record[key] = payload[key]
             for name, ci in (payload.get("statistical_tests") or {}).items():
