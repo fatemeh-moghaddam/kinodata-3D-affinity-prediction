@@ -21,15 +21,15 @@ queue script, split, rmsd, gnn, overwrite from (
    run_extraction, random-k-fold, 6, CGNN-3D, 1
    run_extraction, random-k-fold, 6, CGNN, 1
    run_extraction, random-k-fold, 6, DTI, 1
-   run_extraction, pocket-k-fold, 2, CGNN-3D, 1
-   run_extraction, pocket-k-fold, 2, CGNN, 1
-   run_extraction, pocket-k-fold, 2, DTI, 1
-   run_extraction, pocket-k-fold, 4, CGNN-3D, 1
-   run_extraction, pocket-k-fold, 4, DTI, 1
-   run_extraction, pocket-k-fold, 4, CGNN, 1
-   run_extraction, pocket-k-fold, 6, CGNN-3D, 1
-   run_extraction, pocket-k-fold, 6, CGNN, 1
-   run_extraction, pocket-k-fold, 6, DTI, 1
+   run_extraction, scaffold-k-fold, 2, CGNN-3D, 1
+   run_extraction, scaffold-k-fold, 2, CGNN, 1
+   run_extraction, scaffold-k-fold, 2, DTI, 1
+   run_extraction, scaffold-k-fold, 4, CGNN-3D, 1
+   run_extraction, scaffold-k-fold, 4, DTI, 1
+   run_extraction, scaffold-k-fold, 4, CGNN, 1
+   run_extraction, scaffold-k-fold, 6, CGNN-3D, 1
+   run_extraction, scaffold-k-fold, 6, CGNN, 1
+   run_extraction, scaffold-k-fold, 6, DTI, 1
    run_extraction, pocket-k-fold, 2, CGNN-3D, 1
    run_extraction, pocket-k-fold, 2, CGNN, 1
    run_extraction, pocket-k-fold, 2, DTI, 1
