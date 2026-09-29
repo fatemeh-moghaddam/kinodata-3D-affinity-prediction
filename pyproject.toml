@@ -32,3 +32,9 @@ build-backend = "setuptools.build_meta"
 [tool.uv.extra-build-dependencies]
 torch-cluster = ["torch"]
 
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
+
