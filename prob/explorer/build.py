@@ -133,10 +133,16 @@ METRICS: list[Metric] = [
     Metric("mae", "MAE", higher_better=False, cross_target=False, decimals=3),
     Metric("pearson", "Pearson r", decimals=3,
            ci_lower="pearson_ci_lower", ci_upper="pearson_ci_upper"),
+    # Band = mean +/- sd over the GNN checkpoints, not a bootstrap CI.
+    Metric("r2_ckpt_mean", "R² (checkpoint mean ± sd)", decimals=3,
+           ci_lower="r2_ckpt_lower", ci_upper="r2_ckpt_upper"),
+    Metric("pearson_ckpt_mean", "Pearson r (checkpoint mean ± sd)", decimals=3,
+           ci_lower="pearson_ckpt_lower", ci_upper="pearson_ckpt_upper"),
 ]
 
 EXTRA_COLUMNS: list[Column] = [
     Column("r2_baseline", "Baseline", decimals=3),
+    Column("r2_ckpt_sd", "R² sd (ckpts)", decimals=3),
     Column("n_test_samples", "Test n"),
     Column("n_features", "Features"),
 ]
