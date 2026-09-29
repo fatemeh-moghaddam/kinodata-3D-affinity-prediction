@@ -19,9 +19,15 @@ import pandas as pd
 
 import kinodata.configuration as cfg
 
-from prob.paths_and_io import get_exp_dirs, load_out_tensor, load_X_from_pt, load_y_by_ids
+from prob.paths_and_io import (
+    get_exp_dirs,
+    load_fold_index,
+    load_out_tensor,
+    load_X_from_pt,
+    load_y_by_ids,
+)
 from prob.prob_config import get_ds_load_config
-from prob.prob_run import run_cv_search, run_probe, tune_probe
+from prob.prob_run import run_probe_per_checkpoint
 
 # Probe registry: add entries here to run new linear or non-linear probes.
 # For metrics/stats use prob.prob_metrics and prob.prob_stats.
@@ -99,6 +105,7 @@ def run_probes(
     X: np.ndarray,
     y: np.ndarray,
     idents: np.ndarray,
+    folds: np.ndarray,
     probe_entries: List[Dict[str, Any]],
     n_jobs: int,
     layer_num: int,
@@ -107,12 +114,15 @@ def run_probes(
     target_name_override: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
-    For each probe entry: if param_grid is present, tune then run (best estimator)
-    and write tuning + run artifacts (including statistical_tests in summary).
-    If param_grid is missing or empty, run_probe only with the given estimator.
+    For each probe entry, train one probe per GNN checkpoint (see
+    prob_run.run_probe_per_checkpoint): tuned with GridSearchCV per fold if the
+    entry has a param_grid, else fit as given. Writes one experiment per probe
+    and layer, with per-fold results inside.
 
-    `idents` is aligned row-for-row with X and y; the probe train/test split
-    is looked up by ident (see prob_run.split_by_ident).
+    `idents` and `folds` are aligned row-for-row with X and y: the probe
+    train/test split is looked up by ident, and `folds` says which checkpoint
+    (CV fold) produced each row. reuse_best_params shares each fold's tuned
+    params across the layers of a probe instead of tuning every layer.
     """
     target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
     layer = layer_num
@@ -132,41 +142,27 @@ def run_probes(
         # directory each probe's artifacts/reports/figures are written to.
         print(f"[prob] {name} layer={layer} -> {exp_dirs['root']}", flush=True)
 
-        if param_grid:
-            search, metrics, _ = run_cv_search(
-                X, y, estimator, param_grid,
-                idents=idents,
-                n_splits=N_SPLITS_CV,
-                test_size=TEST_SIZE,
-                random_state=RANDOM_STATE,
-                n_jobs=entry.get("n_jobs") or n_jobs,
-                exp_dirs=exp_dirs,
-                model_name=name,
-                run_stats=True,
-                reuse_best_params=reuse_best_params,
-                best_params_cache_dir=best_params_cache_dir,
-            )
-            run_dict = {
-                "experiment": f"{target_name}_{name}",
-                "layer": layer,
-                **metrics,
-                **search.best_params_,
-            }
-        else:
-            metrics, _, _ = run_probe(
-                X, y, estimator,
-                idents=idents,
-                test_size=TEST_SIZE,
-                random_state=RANDOM_STATE,
-                exp_dirs=exp_dirs,
-                model_name=name,
-                run_stats=True,
-            )
-            run_dict = {
-                "experiment": f"{target_name}_{name}",
-                "layer": layer,
-                **metrics,
-            }
+        _, metrics, _ = run_probe_per_checkpoint(
+            X, y, estimator, param_grid,
+            idents=idents,
+            folds=folds,
+            n_splits=N_SPLITS_CV,
+            test_size=TEST_SIZE,
+            random_state=RANDOM_STATE,
+            n_jobs=entry.get("n_jobs") or n_jobs,
+            exp_dirs=exp_dirs,
+            model_name=name,
+            run_stats=True,
+            share_best_params_across_layers=reuse_best_params,
+            best_params_cache_dir=best_params_cache_dir,
+        )
+        across = metrics.pop("across_checkpoints")
+        run_dict = {
+            "experiment": f"{target_name}_{name}",
+            "layer": layer,
+            **metrics,
+            **{f"{m}_ckpt_{stat}": v for m, s in across.items() for stat, v in s.items()},
+        }
         if wandb.run is not None:
             wandb.log(run_dict)
         all_runs.append(run_dict)
@@ -179,6 +175,7 @@ def linear_models(
     X: np.ndarray,
     y: np.ndarray,
     idents: np.ndarray,
+    folds: np.ndarray,
     layer_num: int,
     n_jobs: int = -1,
     reuse_best_params: bool = False,
@@ -193,6 +190,7 @@ def linear_models(
         X,
         y,
         idents,
+        folds,
         LINEAR_PROBES,
         n_jobs,
         layer_num=layer_num,
@@ -206,6 +204,7 @@ def linear_models_shuffled_ident_baseline(
     prob_config: cfg.Config,
     X: np.ndarray,
     idents: np.ndarray,
+    folds: np.ndarray,
     layer_num: int,
     *,
     n_jobs: int = -1,
@@ -240,6 +239,7 @@ def linear_models_shuffled_ident_baseline(
         X,
         y_shuffled,
         idents,
+        folds,
         layer_num=layer_num,
         n_jobs=n_jobs,
         reuse_best_params=reuse_best_params,
@@ -271,6 +271,7 @@ def non_linear_models(
     X: np.ndarray,
     y: np.ndarray,
     idents: np.ndarray,
+    folds: np.ndarray,
     layer_num: int,
     n_jobs: int = -1,
     reuse_best_params: bool = False,
@@ -286,6 +287,7 @@ def non_linear_models(
         X,
         y,
         idents,
+        folds,
         probe_entries if probe_entries is not None else NONLINEAR_PROBES,
         n_jobs,
         layer_num=layer_num,
@@ -352,7 +354,9 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             return raw.lower() in {"1", "true", "yes"}
         return bool(int(prob_config.get(cfg_key, int(default))))
 
-    reuse_best_params = _flag("PROB_REUSE_BEST_PARAMS", "reuse_best_params", True)
+    # 1 = share each fold's tuned params across layers (faster, but deeper layers
+    # are then probed with params tuned on the first layer). Default: tune every layer.
+    reuse_best_params = _flag("PROB_REUSE_BEST_PARAMS", "reuse_best_params", False)
     best_params_cache_dir_env = os.getenv("PROB_BEST_PARAMS_CACHE_DIR")
     best_params_cache_dir = (
         Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
@@ -435,6 +439,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     # so they must be masked exactly like X and y. The shuffled baseline also uses
     # them unshuffled: only its y is permuted, X rows keep their own idents.
     idents = load_out_tensor(prob_config.output_dir, "ids.pt").detach().cpu().numpy().astype(int)
+    # Which GNN checkpoint (CV fold) produced each row: one probe is trained per checkpoint.
+    folds = load_fold_index(prob_config.output_dir)
 
     if run_shuffled_baseline:
         y_shuffled, valid_mask_shuffled = load_y_by_ids(
@@ -456,6 +462,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     X[valid_mask],
                     y[valid_mask],
                     idents[valid_mask],
+                    folds[valid_mask],
                     layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
@@ -469,6 +476,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     X[valid_mask],
                     y[valid_mask],
                     idents[valid_mask],
+                    folds[valid_mask],
                     layer_num=layer,
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
@@ -485,6 +493,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         X[valid_mask_shuffled],
                         y_shuffled[valid_mask_shuffled],
                         idents[valid_mask_shuffled],
+                        folds[valid_mask_shuffled],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
@@ -499,6 +508,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         X[valid_mask_shuffled],
                         y_shuffled[valid_mask_shuffled],
                         idents[valid_mask_shuffled],
+                        folds[valid_mask_shuffled],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,

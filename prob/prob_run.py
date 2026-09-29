@@ -6,6 +6,10 @@ Tuning (GridSearchCV) and running (fit + evaluate + stats) for probe models.
   and statistical tests, save predictions/summary/plots.
 - run_cv_search: convenience that does tune then run with the same split and
   writes all artifacts (tuning + evaluation + statistical_tests in summary).
+- run_probe_per_checkpoint: what the pipeline uses. One probe per GNN
+  checkpoint (CV fold), since each fold's representations come from a
+  different, separately trained model; results of all folds are written as one
+  experiment.
 """
 from __future__ import annotations
 
@@ -41,9 +45,14 @@ DEFAULT_PROBE_SPLIT_SEED = 0
 #: split_by_ident raises if a condition's test fraction is further than this
 #: from the file's overall test fraction (absolute, e.g. 0.01 -> 9-11% for 10%).
 MAX_TEST_FRACTION_DEVIATION = 0.01
+#: The same check within one checkpoint's ~8k rows, where the fraction varies more
+#: (sd ~0.3 points at RMSD <= 2).
+MAX_TEST_FRACTION_DEVIATION_PER_FOLD = 0.015
 #: Columns: ident, probe_split ("train" / "test"). One fixed assignment for every
 #: model, split type, RMSD cutoff and layer.
 PROBE_SPLIT_FILENAME = "probe_split.csv"
+#: Metrics summarised across checkpoints (mean, sd) in per-checkpoint runs.
+CHECKPOINT_METRICS = ("r2", "rmse", "mae", "pearson")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -191,6 +200,30 @@ def _make_pipeline(estimator: Any) -> Pipeline:
     ])
 
 
+def _json_default(value: Any) -> Any:
+    """json.dump fallback for numpy scalars/arrays in params and grids."""
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    raise TypeError(f"Not JSON serializable: {type(value)}")
+
+
+def _as_json(value: Any) -> Any:
+    """`value` as it reads back from JSON (tuples -> lists, numpy -> python)."""
+    return json.loads(json.dumps(value, default=_json_default))
+
+
+def _normalize_loaded_best_params(loaded: Dict[str, Any]) -> Dict[str, Any]:
+    # `json.dump` converts tuples to lists. Convert back for sklearn params
+    # that typically expect tuples.
+    normalized = dict(loaded)
+    for k, v in normalized.items():
+        if isinstance(v, list) and k.endswith("hidden_layer_sizes"):
+            normalized[k] = tuple(v)
+    return normalized
+
+
 # ─────────────────────────────────────────────────────────────
 # Tuning (hyperparameter search only)
 # ─────────────────────────────────────────────────────────────
@@ -329,7 +362,8 @@ def run_probe(
             statistical_tests=statistical_tests,
             y_test=y_test,
             y_pred=y_pred,
-            X_train=X_train,
+            n_train=int(X_train.shape[0]),
+            n_features=int(X_train.shape[1]),
             exp_dirs=exp_dirs,
             model_name=model_name,
             ids_test=ids_test,
@@ -348,20 +382,30 @@ def _write_run_artifacts(
     statistical_tests: Dict[str, Dict[str, Any]],
     y_test: np.ndarray,
     y_pred: np.ndarray,
-    X_train: np.ndarray,
+    n_train: int,
+    n_features: int,
     exp_dirs: Dict[str, Path],
     model_name: str,
     ids_test: Optional[np.ndarray] = None,
     bootstrap_settings: Optional[Dict[str, Any]] = None,
     probe_split_info: Optional[Dict[str, str]] = None,
+    folds_test: Optional[np.ndarray] = None,
+    extra_summary: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Write evaluation outputs: predictions CSV, summary JSON (with stats), and figures."""
+    """
+    Write evaluation outputs: predictions CSV, summary JSON (with stats), and figures.
+
+    folds_test adds a fold column to the predictions CSV; extra_summary is merged
+    into the summary JSON (per-checkpoint runs put their per_fold results there).
+    """
     artifacts_dir = exp_dirs.get(EXP_DIR_ARTIFACTS)
     reports_dir = exp_dirs.get(EXP_DIR_REPORTS)
     figures_dir = exp_dirs.get(EXP_DIR_FIGURES)
 
     if artifacts_dir is not None:
         pred_df = pd.DataFrame({"y_true": y_test, "y_pred": y_pred})
+        if folds_test is not None:
+            pred_df.insert(0, "fold", folds_test)
         if ids_test is not None:
             pred_df.insert(0, "ident", ids_test)
         pred_df.to_csv(artifacts_dir / f"{model_name}_predictions.csv", index=False)
@@ -370,10 +414,10 @@ def _write_run_artifacts(
         summary = {
             "model": model_name,
             "metrics_on_unseen_data": metrics,
-            "n_samples": int(X_train.shape[0] + len(y_test)),
-            "n_train_samples": int(X_train.shape[0]),
+            "n_samples": int(n_train + len(y_test)),
+            "n_train_samples": int(n_train),
             "n_test_samples": int(len(y_test)),
-            "n_features": int(X_train.shape[1]),
+            "n_features": int(n_features),
         }
         if statistical_tests:
             summary["statistical_tests"] = statistical_tests
@@ -381,8 +425,10 @@ def _write_run_artifacts(
                 summary["bootstrap"] = bootstrap_settings
         if probe_split_info is not None:
             summary["probe_split"] = probe_split_info
+        if extra_summary:
+            summary.update(extra_summary)
         with open(reports_dir / f"{model_name}_summary.json", "w") as f:
-            json.dump(summary, f, indent=2)
+            json.dump(summary, f, indent=2, default=_json_default)
 
     if figures_dir is not None:
         plot_parity(
@@ -457,15 +503,6 @@ def run_cv_search(
         if dir_ is None:
             return None
         return dir_ / f"{model_name}_best_params.json"
-
-    def _normalize_loaded_best_params(loaded: Dict[str, Any]) -> Dict[str, Any]:
-        # `json.dump` converts tuples to lists. Convert back for sklearn params
-        # that typically expect tuples.
-        normalized = dict(loaded)
-        for k, v in normalized.items():
-            if isinstance(v, list) and k.endswith("hidden_layer_sizes"):
-                normalized[k] = tuple(v)
-        return normalized
 
     search: Any
     loaded_best_params: Optional[Dict[str, Any]] = None
@@ -566,3 +603,198 @@ def run_cv_search(
     )
 
     return search, metrics, y_pred
+
+
+# ─────────────────────────────────────────────────────────────
+# Per-checkpoint probing (one probe per CV fold's GNN checkpoint)
+# ─────────────────────────────────────────────────────────────
+
+
+def _read_best_params_by_fold(path: Optional[Path], grid: Any) -> Dict[int, Dict[str, Any]]:
+    """
+    Per-fold best params saved at `path` ({"param_grid": ..., "folds": {"0": {...}}}),
+    or {} if the file is missing, in the old single-params format, or was tuned
+    over a different param_grid (so a changed grid always retunes).
+    """
+    if path is None or not path.exists():
+        return {}
+    with open(path) as f:
+        saved = json.load(f)
+    if not isinstance(saved, dict) or saved.get("param_grid") != grid or "folds" not in saved:
+        return {}
+    return {int(k): _normalize_loaded_best_params(v) for k, v in saved["folds"].items()}
+
+
+def _write_best_params_by_fold(path: Path, grid: Any, best_params: Dict[int, Dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"param_grid": grid, "folds": {str(k): v for k, v in sorted(best_params.items())}}
+    with open(path, "w") as f:
+        json.dump(payload, f, indent=2, default=_json_default)
+
+
+def run_probe_per_checkpoint(
+    X: np.ndarray,
+    y: np.ndarray,
+    prob_model: Any,
+    param_grid: Optional[Dict[str, Any]],
+    *,
+    idents: np.ndarray,
+    folds: np.ndarray,
+    n_splits: int = DEFAULT_N_SPLITS_CV,
+    test_size: float = DEFAULT_TEST_SIZE,
+    random_state: int,
+    n_jobs: int = -1,
+    exp_dirs: Optional[Dict[str, Path]] = None,
+    model_name: str = "model",
+    refit: str = DEFAULT_REFIT,
+    run_stats: bool = True,
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    share_best_params_across_layers: bool = False,
+    best_params_cache_dir: Optional[Path] = None,
+    probe_split_path: Optional[Path] = None,
+) -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Any], pd.DataFrame]:
+    """
+    Train one probe per GNN checkpoint and evaluate them as one experiment.
+
+    Each CV fold's representations come from that fold's own checkpoint, and the
+    checkpoints' embedding spaces are not aligned, so a single probe over all
+    folds would have to decode five coordinate systems at once. Here every fold
+    (`folds`, aligned row-for-row with X, y and idents) gets its own probe:
+    split by ident with the global probe split, tuned with GridSearchCV on its
+    train rows (or fit as-is if param_grid is empty), and evaluated on its test
+    rows. The test rows of all folds together are the same idents for every
+    model, split type and layer at a cutoff, so the pooled metrics and bootstrap
+    CIs stay paired across conditions.
+
+    Best params are saved per fold in reports/<model>_best_params.json. A rerun
+    of the same experiment reuses them when they were tuned over the same
+    param_grid. With share_best_params_across_layers, a fold's params are also
+    shared with the other layers of the same probe and target (first layer
+    tuned wins), trading per-layer tuning for time.
+
+    Writes: predictions CSV (ident, fold, y_true, y_pred), cv_results with a fold
+    column, best params, figures, and a summary JSON whose metrics_on_unseen_data
+    / statistical_tests are over all test rows, plus per_fold results and
+    across_checkpoints (mean, sd over folds).
+
+    Returns (best_params_by_fold, metrics, predictions DataFrame).
+    """
+    idents = np.asarray(idents).astype(int)
+    folds = np.asarray(folds).astype(int)
+    if not (len(folds) == len(idents) == len(X) == len(y)):
+        raise ValueError(
+            f"folds ({len(folds)}), idents ({len(idents)}), X ({len(X)}) and y ({len(y)}) "
+            "must have the same length"
+        )
+    probe_split = load_probe_split(probe_split_path, test_size=test_size)
+    probe_split_info = probe_split_provenance(probe_split_path)
+    grid = _as_json(param_grid or {})
+
+    reports_dir = exp_dirs.get(EXP_DIR_REPORTS) if exp_dirs is not None else None
+    own_fp = reports_dir / f"{model_name}_best_params.json" if reports_dir is not None else None
+    shared_fp = None
+    if share_best_params_across_layers and exp_dirs is not None:
+        # exp_dirs["root"] is .../<target>/<probe>/<layer>, so this is shared by all layers.
+        cache_dir = best_params_cache_dir or exp_dirs["root"].parent / "shared_best_params"
+        shared_fp = Path(cache_dir) / f"{model_name}_best_params.json"
+    saved = _read_best_params_by_fold(own_fp, grid)
+    shared = _read_best_params_by_fold(shared_fp, grid)
+
+    best_params: Dict[int, Dict[str, Any]] = {}
+    per_fold: list = []
+    pieces: list = []
+    cv_frames: list = []
+    n_train_total = 0
+    start = time.time()
+
+    for fold in np.unique(folds):
+        rows = folds == fold
+        X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
+            X[rows], y[rows], idents[rows], probe_split,
+            max_fraction_deviation=MAX_TEST_FRACTION_DEVIATION_PER_FOLD,
+        )
+        params = saved.get(fold, shared.get(fold))
+        if params is not None:
+            pipe = _make_pipeline(clone(prob_model)).set_params(**params)
+            pipe.fit(X_train, y_train)
+        elif param_grid:
+            search = tune_probe(
+                X_train, y_train, prob_model, param_grid,
+                n_splits=n_splits, random_state=random_state, n_jobs=n_jobs,
+                refit=refit,
+            )
+            pipe, params = search.best_estimator_, search.best_params_
+            cv_frames.append(pd.DataFrame(search.cv_results_).assign(fold=fold))
+        else:
+            pipe = _make_pipeline(clone(prob_model)).fit(X_train, y_train)
+            params = {}
+
+        y_pred = pipe.predict(X_test)
+        best_params[int(fold)] = params
+        per_fold.append({
+            "fold": int(fold),
+            "n_train_samples": int(len(y_train)),
+            "n_test_samples": int(len(y_test)),
+            **evaluate_predictions(y_test, y_pred),
+            "best_params": params,
+        })
+        pieces.append(pd.DataFrame({"ident": ids_test, "fold": int(fold), "y_true": y_test, "y_pred": y_pred}))
+        n_train_total += len(y_train)
+
+    pred_df = pd.concat(pieces, ignore_index=True).sort_values("ident", kind="stable").reset_index(drop=True)
+    y_test_all = pred_df["y_true"].to_numpy()
+    y_pred_all = pred_df["y_pred"].to_numpy()
+    metrics = evaluate_predictions(y_test_all, y_pred_all)
+    metrics["fit_seconds"] = time.time() - start
+
+    statistical_tests: Dict[str, Dict[str, Any]] = {}
+    if run_stats:
+        statistical_tests = run_probe_statistical_tests(
+            y_test_all, y_pred_all,
+            confidence=confidence, n_bootstrap=n_bootstrap, random_state=random_state,
+        )
+
+    across_checkpoints = {
+        name: {
+            "mean": float(np.mean([f[name] for f in per_fold])),
+            "sd": float(np.std([f[name] for f in per_fold], ddof=1)) if len(per_fold) > 1 else float("nan"),
+        }
+        for name in CHECKPOINT_METRICS
+    }
+
+    if exp_dirs is not None:
+        if own_fp is not None:
+            _write_best_params_by_fold(own_fp, grid, best_params)
+        if shared_fp is not None:
+            # First layer tuned wins: only fill folds the shared file does not have yet.
+            _write_best_params_by_fold(shared_fp, grid, {**best_params, **shared})
+        artifacts_dir = exp_dirs.get(EXP_DIR_ARTIFACTS)
+        if cv_frames and artifacts_dir is not None:
+            pd.concat(cv_frames, ignore_index=True).to_csv(
+                artifacts_dir / f"{model_name}_cv_results.csv", index=False
+            )
+        _write_run_artifacts(
+            metrics=metrics,
+            statistical_tests=statistical_tests,
+            y_test=y_test_all,
+            y_pred=y_pred_all,
+            n_train=n_train_total,
+            n_features=int(X.shape[1]),
+            exp_dirs=exp_dirs,
+            model_name=model_name,
+            ids_test=pred_df["ident"].to_numpy(),
+            folds_test=pred_df["fold"].to_numpy(),
+            bootstrap_settings=(
+                {"n_bootstrap": n_bootstrap, "confidence": confidence, "random_state": random_state}
+                if run_stats else None
+            ),
+            probe_split_info=probe_split_info,
+            extra_summary={
+                "probe_mode": "per_checkpoint",
+                "across_checkpoints": across_checkpoints,
+                "per_fold": per_fold,
+            },
+        )
+
+    return best_params, {**metrics, "across_checkpoints": across_checkpoints}, pred_df

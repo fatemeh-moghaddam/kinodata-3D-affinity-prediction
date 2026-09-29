@@ -360,6 +360,8 @@ def attach_run_metrics(runs: pd.DataFrame) -> pd.DataFrame:
     These are the numbers the pipeline itself reported (plus n_samples and the
     bootstrap CIs), so box plots built from them agree with the per-experiment
     figures by construction rather than by re-deriving r2 from the CSVs.
+    Per-checkpoint runs also get <metric>_ckpt_{mean,sd,lower,upper}, the spread
+    over the GNN checkpoints (lower/upper = mean -/+ sd).
     Missing or unreadable summaries yield NaN columns for that row.
     """
     if runs.empty:
@@ -382,6 +384,12 @@ def attach_run_metrics(runs: pd.DataFrame) -> pd.DataFrame:
                 if isinstance(ci, dict) and "lower" in ci:
                     record[f"{name}_lower"] = ci["lower"]
                     record[f"{name}_upper"] = ci["upper"]
+            # Per-checkpoint runs: mean +/- sd over the GNN checkpoints (CV folds).
+            for name, stat in (payload.get("across_checkpoints") or {}).items():
+                record[f"{name}_ckpt_mean"] = stat["mean"]
+                record[f"{name}_ckpt_sd"] = stat["sd"]
+                record[f"{name}_ckpt_lower"] = stat["mean"] - stat["sd"]
+                record[f"{name}_ckpt_upper"] = stat["mean"] + stat["sd"]
         records.append(record)
 
     metrics = pd.DataFrame(records, index=runs.index)
@@ -420,6 +428,33 @@ def load_X_from_pt(
     file_name = f"layer_{layer_num}.pt"
     X_tensor = load_out_tensor(in_dir, file_name)
     return X_tensor.detach().cpu().numpy()
+
+
+def load_fold_index(in_dir: str | Path, ids_file: str = "ids.pt") -> np.ndarray:
+    """
+    The CV fold (= GNN checkpoint) each row of the aggregated ids.pt / layer_*.pt
+    came from, aligned row-for-row with them.
+
+    The aggregates are the fold files <k>/ids_<k>.pt concatenated in fold order
+    (see resloves_and_transforms.aggregate_ids), so this rebuilds that
+    concatenation and refuses to guess if it no longer matches ids.pt.
+    """
+    in_dir = Path(in_dir)
+    fold_files = sorted(
+        (int(p.parent.name), p)
+        for p in in_dir.glob("[0-9]*/ids_*.pt")
+        if p.parent.name.isdigit() and p.name == f"ids_{p.parent.name}.pt"
+    )
+    if not fold_files:
+        raise FileNotFoundError(f"No per-fold <k>/ids_<k>.pt files under {in_dir}")
+    fold_ids = [torch.load(p).detach().cpu().numpy().ravel() for _, p in fold_files]
+    ids = load_out_tensor(in_dir, ids_file).detach().cpu().numpy().ravel()
+    if not np.array_equal(np.concatenate(fold_ids), ids):
+        raise ValueError(
+            f"{in_dir / ids_file} is not the concatenation of the per-fold ids files; "
+            "re-run the extraction's aggregation before probing"
+        )
+    return np.concatenate([np.full(len(i), k) for (k, _), i in zip(fold_files, fold_ids)])
 
 
 def load_y_by_ids(
