@@ -25,8 +25,17 @@ prob/cluster/*.json
 prob/cluster/*.out
 prob/cluster/*.err
 
+# logs of local runs (prob/local/run_prob_local.sh)
+/logs/
+
+
 # Managing files between local and cluster
-prob/copy_probing_results.sh
+prob/local/copy_probing_results.sh
+prob/local/copy_reprs.sh
+
+# local runs
+prob/local/run_prob_local.sh
+Claude outputs/
 
 # local config files
 *_local.yaml
