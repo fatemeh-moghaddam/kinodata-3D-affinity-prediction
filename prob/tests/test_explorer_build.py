@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from prob.explorer.build import (
+    EXTRA_COLUMNS,
     FACTORS,
     METRICS,
     PLACEHOLDER,
@@ -43,6 +44,15 @@ def make_runs(n=4, **overrides):
         "n_test_samples": [4124] * n,
         "n_features": [256] * n,
     })
+    # Anything else the payload reads (metrics added later, their bands, extra
+    # table columns) gets a number too, so the only missing columns in a test are
+    # the ones it dropped on purpose.
+    read = ([m.key for m in METRICS]
+            + [k for m in METRICS for k in (m.ci_lower, m.ci_upper) if k]
+            + [c.key for c in EXTRA_COLUMNS])
+    for key in read:
+        if key not in frame:
+            frame[key] = np.linspace(0.1, 0.4, n)
     return frame.assign(**overrides)
 
 

@@ -1,161 +1,177 @@
-''' Fixtures: GraphReprs, KinodataDocked, CGNN model, model config, and model ckpt.'''
-import torch
-import pytest
+"""
+Shared fixtures: a synthetic extraction output that looks like one condition's
+data/probing/<gnn>/rmsd_cutoff_<x>/<split>/ directory, and the probe split file
+that goes with it.
+
+Nothing here reads or writes the real data/ tree. The autouse guard points the
+default probe split at tmp_path and makes the catalogue unreadable, so a test
+that forgets to set up its own split fails instead of silently creating
+data/probing/probe_split.csv.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
 from pathlib import Path
-import os
+
+import matplotlib
+
+matplotlib.use("Agg")
+
+import numpy as np
+import pandas as pd
+import pytest
+import torch
+
+#: Env vars prob_orchestrate reads; cleared so the caller's shell cannot steer a test.
+PROB_ENV = (
+    "PROB_LAYERS",
+    "PROB_REUSE_BEST_PARAMS",
+    "PROB_BEST_PARAMS_CACHE_DIR",
+    "PROB_RUN_SHUFFLED_BASELINE",
+    "PROB_RUN_LINEAR_MODELS",
+    "PROB_RUN_NON_LINEAR_MODELS",
+    "PROB_NONLINEAR_MODELS",
+    "PROB_BASELINE_TAG",
+)
 
 
-from prob.run_extraction import set_probing_config
-from prob.utils import build_kd_ds, build_gnn_model
-
-from kinodata.data import KinodataDocked
-from kinodata.transform import TransformToComplexGraph
-from kinodata.model.complex_transformer import make_model, ComplexTransformer
-
-from prob.prob_config import load_config, load_model_from_checkpoint
-from prob.prob_dataset import GraphReprs, ProbingDataset
-from .test_config import *
-
-
-
-@pytest.fixture
-def hidden_channels():
-    return HIDDEN_CHANNELS
-
-@pytest.fixture
-def num_graphs():
-    return NUM_GRAPHS
-
-@pytest.fixture
-def num_nodes():
-    return NUM_NODES
-
-@pytest.fixture
-def num_edges():
-    return NUM_EDGES
-
-@pytest.fixture
-def base_mw():
-    return BASE_MW
-
-@pytest.fixture
-def mw_step():
-    return MW_STEP
-
-
-
-# Keep heavy things fast for smoke runs; let overrides come from kwargs/env
-@pytest.fixture(scope="session")
-def prob_config():
-    # You can pass kwargs here to make the test lighter/faster (e.g., tiny split)
-    cfg = set_probing_config()  # or set_probing_config(split_index=0, graph_level=True, ...)
-    # If split_file depends on other fields, ensure it’s computed here (if your function doesn’t already)
-    if getattr(cfg, "split_file", None) is None:
-        # compute it if your code normally does it later:
-        # cfg["split_file"] = get_split_file(cfg.split_type, cfg.split_index, cfg.filter_rmsd_max_value)
-        pass
-    return cfg
-
-@pytest.fixture(scope="session")
-def gnn_model(prob_config):
-    model = build_gnn_model(prob_config).eval()
-    return model
-
-@pytest.fixture(scope="session")
-def kd_ds(prob_config):
-    ds = build_kd_ds(
-        split_path=prob_config.split_file,
-        filter_rmsd_max_value=prob_config.filter_rmsd_max_value,
+@pytest.fixture(autouse=True)
+def isolate_from_real_data(tmp_path, monkeypatch):
+    for key in PROB_ENV:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(
+        "prob.prob_run.default_probe_split_path", lambda: tmp_path / "default_probe_split.csv"
     )
-    return ds
+
+    def _no_catalogue(*_args, **_kwargs):
+        raise RuntimeError("tests must not read the real ident catalogue; write a probe split first")
+
+    monkeypatch.setattr("prob.prob_run.catalogue_idents", _no_catalogue)
 
 
+# ─────────────────────────────────────────────────────────────
+# Synthetic condition
+# ─────────────────────────────────────────────────────────────
 
-    
 
-####### The Legacy Fixtures #######
+@dataclass
+class World:
+    """One synthetic condition on disk plus the ground truth it was built from."""
 
-@pytest.mark.legacy
-@pytest.fixture(scope="session") # to avoid reloading the dataset multiple times, cause KinodataDocked is large
-def kino_dataset():
-    ''' Create a subset of KinodataDocked '''
-    ds = KinodataDocked(transform=TransformToComplexGraph, use_multiprocessing=True, num_processes=12)
-    # limit to first 10 samples
-    ds = torch.utils.data.Subset(ds, range(20))
-    assert len(ds) == 20, "KinodataDocked dataset should have 20 samples"
-    return ds
+    out_dir: Path              # like data/probing/<gnn>/rmsd_cutoff_<x>/<split>
+    target_dir: Path           # like data/probing/targets
+    target_file: str
+    probe_split_path: Path
+    idents: np.ndarray         # row order of ids.pt
+    folds: np.ndarray          # checkpoint of each row
+    layers: dict[int, np.ndarray]
+    targets: dict[int, float]  # what affinity.pt holds (missing idents are absent)
+    test_idents: set[int]      # probe test idents, over the whole catalogue
 
-@pytest.mark.legacy
-@pytest.fixture
-def model_path():
-    ''' Return the path to the model directory '''
-    p = Path(__file__).parents[2] / "models" / "rmsd_cutoff_2" / "scaffold-k-fold" / "0" / "CGNN-3D"
-    assert p.exists(), f"Model path {p} does not exist"
-    return p
+    def layer(self, n: int) -> np.ndarray:
+        return self.layers[n]
 
-@pytest.mark.legacy
-@pytest.fixture
-def model_config_path(model_path):
-    ''' Return the path to the model config file '''
-    cfg_path = model_path / "config.json"
-    assert cfg_path.exists(), f"Model config path {cfg_path} does not exist"
-    return model_path / "config.json"
+    @property
+    def y(self) -> np.ndarray:
+        return np.array([self.targets.get(int(i), np.nan) for i in self.idents])
 
-@pytest.mark.legacy
-@pytest.fixture
-def model_ckpt(model_path):
-    ''' Return the path to the model checkpoint file '''
-    ckpt = list(model_path.glob("**/*.ckpt"))
-    assert len(ckpt) == 1, "Expected exactly one checkpoint file"
-    return ckpt[0]
 
-@pytest.mark.legacy
-@pytest.fixture
-def cgnn_model(model_config_path):
-    ''' Load the model from the config and checkpoint files '''
-    config = load_config(model_config_path)
-    model = make_model(config)
-    # To DO : Add more specific assertions based on the expected model structure
-    assert isinstance(model, ComplexTransformer), "Model is not of type ComplexTransformer"
-    return model
+def build_world(
+    root: Path,
+    *,
+    n_folds: int = 5,
+    rows_per_fold: int = 200,
+    n_features: int = 8,
+    missing_targets: int = 2,
+    seed: int = 0,
+) -> World:
+    """
+    Write a condition whose layer_1 carries the target and whose layer_0 does not.
 
-@pytest.mark.legacy
-# I actually don't need this fixture, since the ProbingDataset already loads the model
-@pytest.fixture(scope="session")
-def loaded_cgnn_model(cgnn_model, model_ckpt):
-    ''' Load the CGNN model from the config and checkpoint files '''
-    model = load_model_from_checkpoint(cgnn_model, model_ckpt)
-    return model
+    Every checkpoint sees the same latent z through its own random rotation, as
+    separately trained GNNs do: layer_1 of fold k is z @ R_k. y = z @ w, so a
+    probe per checkpoint recovers y and one probe over all folds cannot.
 
-@pytest.mark.legacy
-@pytest.fixture(scope="session")
-def probing_dataset(kino_dataset, cgnn_model, model_ckpt):
-    ''' Create a probing dataset with 10 KinodataDocked objects '''
-    pd = ProbingDataset(
-        orig_dataset=kino_dataset,
-        model=cgnn_model,
-        model_ckpt=str(model_ckpt),
-        graph_level=True,  # Use graph level representations
-        batch_size=1,  
-        num_workers=1,
+    Idents are spaced (not row positions) and shuffled inside each fold, so any
+    code that splits or aligns by position rather than by ident gets caught.
+    Exactly 10% of each fold is in the probe test set, which keeps
+    split_by_ident's fraction check satisfied after a couple of NaN targets.
+    """
+    rng = np.random.default_rng(seed)
+    n = n_folds * rows_per_fold
+    out_dir = root / "probing" / "CGNN-3D" / "rmsd_cutoff_2" / "random-k-fold"
+    target_dir = root / "probing" / "targets"
+    out_dir.mkdir(parents=True)
+    target_dir.mkdir(parents=True)
+
+    positions = np.arange(n)
+    idents_sorted = 1000 + 7 * positions
+    is_test = positions % 10 == 0
+    folds = positions // rows_per_fold
+
+    # Shuffle rows inside each fold: ids.pt is not sorted in real extractions either.
+    order = np.concatenate([
+        rng.permutation(np.flatnonzero(folds == k)) for k in range(n_folds)
+    ])
+    idents = idents_sorted[order]
+    folds = folds[order]
+
+    z = rng.normal(size=(n, n_features))
+    w = rng.normal(size=n_features)
+    y = z @ w + 0.05 * rng.normal(size=n)
+
+    layer_1 = np.empty_like(z)
+    for k in range(n_folds):
+        rotation, _ = np.linalg.qr(rng.normal(size=(n_features, n_features)))
+        rows = folds == k
+        layer_1[rows] = z[rows] @ rotation
+    layers = {0: rng.normal(size=(n, n_features)), 1: layer_1}
+
+    targets = {int(i): float(v) for i, v in zip(idents, y)}
+    # Drop a few targets (NaN after load_y_by_ids): one test and train ident first.
+    test_rows = np.flatnonzero(np.isin(idents, idents_sorted[is_test]))
+    train_rows = np.flatnonzero(~np.isin(idents, idents_sorted[is_test]))
+    for row in [*test_rows[:missing_targets // 2], *train_rows[:missing_targets - missing_targets // 2]]:
+        targets.pop(int(idents[row]))
+
+    for k in range(n_folds):
+        rows = folds == k
+        fold_dir = out_dir / str(k)
+        fold_dir.mkdir()
+        torch.save(torch.as_tensor(idents[rows], dtype=torch.long), fold_dir / f"ids_{k}.pt")
+        for num, X in layers.items():
+            torch.save(torch.as_tensor(X[rows], dtype=torch.float32), fold_dir / f"layer_{num}_{k}.pt")
+    torch.save(torch.as_tensor(idents, dtype=torch.long), out_dir / "ids.pt")
+    for num, X in layers.items():
+        torch.save(torch.as_tensor(X, dtype=torch.float32), out_dir / f"layer_{num}.pt")
+    torch.save(targets, target_dir / "affinity.pt")
+
+    # The split file covers more than this condition, like the real catalogue does.
+    extra = 1000 + 7 * np.arange(n, n + 100)
+    catalogue = np.concatenate([idents_sorted, extra])
+    catalogue_test = np.concatenate([is_test, np.arange(100) % 10 == 0])
+    probe_split_path = root / "probing" / "probe_split.csv"
+    pd.DataFrame({
+        "ident": catalogue,
+        "probe_split": np.where(catalogue_test, "test", "train"),
+    }).to_csv(probe_split_path, index=False)
+
+    return World(
+        out_dir=out_dir,
+        target_dir=target_dir,
+        target_file="affinity.pt",
+        probe_split_path=probe_split_path,
+        idents=idents,
+        folds=folds,
+        layers={num: X.astype(np.float32) for num, X in layers.items()},
+        targets=targets,
+        test_idents=set(catalogue[catalogue_test].tolist()),
     )
-    return pd
 
-@pytest.mark.legacy
+
 @pytest.fixture
-def graph_list(num_graphs, num_nodes, num_edges, hidden_channels, base_mw, mw_step):
-    ''' Create a list of GraphReprs object '''
-
-    graphs = []
-    for i in range(num_graphs):
-        g = GraphReprs(ident = i)
-        g.graph_repr = { "layer_0": (torch.randn(hidden_channels))}
-        g.node_repr = { "layer_0": (torch.randn(num_nodes,hidden_channels))}
-        g.edge_repr = { "layer_0": (torch.randn(num_edges,hidden_channels))}
-        g.edge_index = { "layer_0": (torch.randint(0, num_nodes, (2, num_nodes)))}
-        # g.node_repr_batch = { "layer_0": torch.ones(num_nodes, dtype=torch.long)*i}
-        # prob target
-        g.add_property("mw", base_mw + i*mw_step)
-        graphs.append(g)
-
-    return graphs
+def world(tmp_path, monkeypatch) -> World:
+    """A synthetic condition, with its split installed as the default probe split."""
+    w = build_world(tmp_path)
+    monkeypatch.setattr("prob.prob_run.default_probe_split_path", lambda: w.probe_split_path)
+    return w
