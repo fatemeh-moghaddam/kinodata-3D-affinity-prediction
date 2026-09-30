@@ -20,6 +20,7 @@ import pandas as pd
 import kinodata.configuration as cfg
 
 from prob.paths_and_io import (
+    EXP_DIR_REPORTS,
     get_exp_dirs,
     load_fold_index,
     load_out_tensor,
@@ -27,7 +28,7 @@ from prob.paths_and_io import (
     load_y_by_ids,
 )
 from prob.prob_config import get_ds_load_config
-from prob.prob_run import run_probe_per_checkpoint
+from prob.prob_run import load_best_params_by_fold, run_probe_per_checkpoint
 
 # Probe registry: add entries here to run new linear or non-linear probes.
 # For metrics/stats use prob.prob_metrics and prob.prob_stats.
@@ -41,7 +42,9 @@ import wandb
 # ─────────────────────────────────────────────────────────────
 
 RANDOM_STATE = 96
-N_SPLITS_CV = 5
+# Inner CV folds of the per-checkpoint grid search (hyperparameter choice only;
+# test metrics come from the fixed probe split).
+N_SPLITS_CV = 3
 TEST_SIZE = 0.1
 TARGET_FILE = None
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1]))
@@ -112,6 +115,7 @@ def run_probes(
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
+    params_from_target: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     For each probe entry, train one probe per GNN checkpoint (see
@@ -123,6 +127,11 @@ def run_probes(
     train/test split is looked up by ident, and `folds` says which checkpoint
     (CV fold) produced each row. reuse_best_params shares each fold's tuned
     params across the layers of a probe instead of tuning every layer.
+
+    params_from_target skips tuning and fits every fold with the params tuned
+    for that target (same probe, same layer), which must have run already. The
+    shuffled-ident baseline uses it with the real target, so the control runs
+    the same probe as the real task.
     """
     target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
     layer = layer_num
@@ -142,6 +151,21 @@ def run_probes(
         # directory each probe's artifacts/reports/figures are written to.
         print(f"[prob] {name} layer={layer} -> {exp_dirs['root']}", flush=True)
 
+        fixed_params, fixed_source = None, None
+        if params_from_target is not None:
+            source_dirs = get_exp_dirs(
+                prob_config.output_dir, target=params_from_target,
+                prob_model=name, layer_num=layer, create=False,
+            )
+            fixed_source = source_dirs[EXP_DIR_REPORTS] / f"{name}_best_params.json"
+            fixed_params = load_best_params_by_fold(fixed_source, param_grid)
+            if not fixed_params:
+                raise FileNotFoundError(
+                    f"No per-fold best params for {name} layer {layer} of target "
+                    f"'{params_from_target}' at {fixed_source} (tuned over the current grid); "
+                    "run the real target before its baseline"
+                )
+
         _, metrics, _ = run_probe_per_checkpoint(
             X, y, estimator, param_grid,
             idents=idents,
@@ -155,6 +179,8 @@ def run_probes(
             run_stats=True,
             share_best_params_across_layers=reuse_best_params,
             best_params_cache_dir=best_params_cache_dir,
+            fixed_best_params=fixed_params,
+            fixed_best_params_source=str(fixed_source) if fixed_source is not None else None,
         )
         across = metrics.pop("across_checkpoints")
         run_dict = {
@@ -181,6 +207,7 @@ def linear_models(
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
+    params_from_target: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Run all registered linear probes. Use LINEAR_PROBES in prob_models to add more."""
     if n_jobs == -1:
@@ -197,6 +224,7 @@ def linear_models(
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
         target_name_override=target_name_override,
+        params_from_target=params_from_target,
     )
 
 
@@ -220,6 +248,7 @@ def linear_models_shuffled_ident_baseline(
     This permutes id->target mapping before loading y, producing a random-label
     control with the same marginal target distribution. `idents` are the real
     (unshuffled) row idents from ids.pt: only y is shuffled, X rows keep theirs.
+    Uses the real target's tuned params, so the real target must have run first.
     """
     if n_jobs == -1:
         n_jobs = _cpu_budget()
@@ -245,6 +274,7 @@ def linear_models_shuffled_ident_baseline(
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
         target_name_override=baseline_target_name,
+        params_from_target=Path(target_file).stem,
     )
 
 
@@ -278,6 +308,7 @@ def non_linear_models(
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
     probe_entries: Optional[List[Dict[str, Any]]] = None,
+    params_from_target: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Run registered non-linear probes (all of NONLINEAR_PROBES, or probe_entries if given)."""
     if n_jobs == -1:
@@ -294,6 +325,7 @@ def non_linear_models(
         reuse_best_params=reuse_best_params,
         best_params_cache_dir=best_params_cache_dir,
         target_name_override=target_name_override,
+        params_from_target=params_from_target,
     )
 
 
@@ -499,6 +531,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         reuse_best_params=reuse_best_params,
                         best_params_cache_dir=best_params_cache_dir,
                         target_name_override=baseline_target_name,
+                        params_from_target=target_name,
                     )
                 )
             if run_non_linear_models:
@@ -515,6 +548,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         best_params_cache_dir=best_params_cache_dir,
                         probe_entries=nonlinear_probe_entries,
                         target_name_override=baseline_target_name,
+                        params_from_target=target_name,
                     )
                 )
 

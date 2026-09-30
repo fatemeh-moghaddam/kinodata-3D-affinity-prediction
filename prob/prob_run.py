@@ -625,6 +625,12 @@ def _read_best_params_by_fold(path: Optional[Path], grid: Any) -> Dict[int, Dict
     return {int(k): _normalize_loaded_best_params(v) for k, v in saved["folds"].items()}
 
 
+def load_best_params_by_fold(path: Path, param_grid: Optional[Dict[str, Any]]) -> Dict[int, Dict[str, Any]]:
+    """Per-fold best params a run saved at `path`, if they were tuned over
+    `param_grid` ({} otherwise). Used to give a control run the same params."""
+    return _read_best_params_by_fold(Path(path), _as_json(param_grid or {}))
+
+
 def _write_best_params_by_fold(path: Path, grid: Any, best_params: Dict[int, Dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"param_grid": grid, "folds": {str(k): v for k, v in sorted(best_params.items())}}
@@ -653,6 +659,8 @@ def run_probe_per_checkpoint(
     share_best_params_across_layers: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     probe_split_path: Optional[Path] = None,
+    fixed_best_params: Optional[Dict[int, Dict[str, Any]]] = None,
+    fixed_best_params_source: Optional[str] = None,
 ) -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Any], pd.DataFrame]:
     """
     Train one probe per GNN checkpoint and evaluate them as one experiment.
@@ -672,6 +680,14 @@ def run_probe_per_checkpoint(
     param_grid. With share_best_params_across_layers, a fold's params are also
     shared with the other layers of the same probe and target (first layer
     tuned wins), trading per-layer tuning for time.
+
+    fixed_best_params ({fold: params}, e.g. from load_best_params_by_fold) skips
+    tuning altogether: every fold is fit with its given params. The shuffled-ident
+    baseline uses this to run with the real target's params, so the control gets
+    the same probe as the real task and costs one fit per fold.
+    fixed_best_params_source (e.g. the file they came from) is recorded in the
+    summary. Each fold's params_source (fixed / saved / shared / tuned / default)
+    is recorded in per_fold.
 
     Writes: predictions CSV (ident, fold, y_true, y_pred), cv_results with a fold
     column, best params, figures, and a summary JSON whose metrics_on_unseen_data
@@ -700,6 +716,12 @@ def run_probe_per_checkpoint(
         shared_fp = Path(cache_dir) / f"{model_name}_best_params.json"
     saved = _read_best_params_by_fold(own_fp, grid)
     shared = _read_best_params_by_fold(shared_fp, grid)
+    if fixed_best_params is not None:
+        missing = sorted(set(np.unique(folds).tolist()) - set(fixed_best_params))
+        if missing:
+            raise ValueError(
+                f"fixed_best_params ({fixed_best_params_source}) has no params for fold(s) {missing}"
+            )
 
     best_params: Dict[int, Dict[str, Any]] = {}
     per_fold: list = []
@@ -714,7 +736,14 @@ def run_probe_per_checkpoint(
             X[rows], y[rows], idents[rows], probe_split,
             max_fraction_deviation=MAX_TEST_FRACTION_DEVIATION_PER_FOLD,
         )
-        params = saved.get(fold, shared.get(fold))
+        if fixed_best_params is not None:
+            params, source = fixed_best_params[int(fold)], "fixed"
+        elif fold in saved:
+            params, source = saved[fold], "saved"
+        elif fold in shared:
+            params, source = shared[fold], "shared"
+        else:
+            params, source = None, "tuned" if param_grid else "default"
         if params is not None:
             pipe = _make_pipeline(clone(prob_model)).set_params(**params)
             pipe.fit(X_train, y_train)
@@ -738,6 +767,7 @@ def run_probe_per_checkpoint(
             "n_test_samples": int(len(y_test)),
             **evaluate_predictions(y_test, y_pred),
             "best_params": params,
+            "params_source": source,
         })
         pieces.append(pd.DataFrame({"ident": ids_test, "fold": int(fold), "y_true": y_test, "y_pred": y_pred}))
         n_train_total += len(y_train)
@@ -792,6 +822,8 @@ def run_probe_per_checkpoint(
             probe_split_info=probe_split_info,
             extra_summary={
                 "probe_mode": "per_checkpoint",
+                "n_splits_cv": n_splits,
+                **({"best_params_from": fixed_best_params_source} if fixed_best_params is not None else {}),
                 "across_checkpoints": across_checkpoints,
                 "per_fold": per_fold,
             },

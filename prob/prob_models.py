@@ -280,7 +280,9 @@ NONLINEAR_PROBES: List[Dict[str, Any]] = [
             "model__hidden_layer_sizes": [(128,), (256,), (256, 128)],
             "model__activation": ["relu"],
             "model__alpha": [1e-5, 1e-4, 1e-3],
-            "model__learning_rate_init": [1e-3, 3e-3],
+            # 3e-3 dropped: over 217 archived tunings it cost <= 0.0027 inner-CV R2
+            # in 95% of them (median 0) and halves the grid.
+            "model__learning_rate_init": [1e-3],
             "model__max_iter": [200],
             "model__early_stopping": [True],
             "model__random_state": [RANDOM_STATE],
