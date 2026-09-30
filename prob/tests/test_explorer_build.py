@@ -195,3 +195,100 @@ def test_built_page_is_self_contained_apart_from_google_fonts():
     remote = re.findall(r'(?:href|src)="(https?://[^"]+)"', html)
     assert all(u.startswith(("https://fonts.googleapis.com",
                             "https://fonts.gstatic.com")) for u in remote), remote
+
+
+# ─────────────────────────────────────────────────────────────
+# Sources (live sweep + archives) and parity sidecars
+# ─────────────────────────────────────────────────────────────
+
+from prob.explorer.build import (  # noqa: E402
+    PARITY_CALLBACK,
+    Source,
+    _archive_label,
+    build_sources_payload,
+    list_archives,
+    run_id,
+    write_parity_sidecars,
+)
+
+
+def test_sources_payload_shares_config_and_opens_on_a_source_with_runs(tmp_path):
+    """Right after archiving, data/probing is empty: the page must open on the
+    archive rather than on a blank view."""
+    empty = Source("current", "Current", "current", tmp_path, pd.DataFrame())
+    arch = Source("20260929_160507", "2026-09-29 16:05:07", "archive", tmp_path, make_runs())
+    payload = build_sources_payload([empty, arch], parity_dir="x_parity")
+
+    assert payload["defaultSource"] == "20260929_160507"
+    assert [s["key"] for s in payload["sources"]] == ["current", "20260929_160507"]
+    assert payload["sources"][0]["nRuns"] == 0
+    assert payload["sources"][1]["nRuns"] == 4
+    assert payload["config"]["parityDir"] == "x_parity"
+    # per-source provenance lives on the source, not the shared config
+    assert "nRuns" not in payload["config"] and "source" not in payload["config"]
+    json.dumps(payload, allow_nan=False)
+
+
+def test_sources_payload_renders_into_the_template(tmp_path):
+    src = Source("current", "Current", "current", tmp_path, make_runs())
+    html = render_html(build_sources_payload([src]))
+    assert PLACEHOLDER not in html
+    assert '"sources"' in html
+
+
+def test_archives_list_newest_first_and_get_readable_labels(tmp_path):
+    for name in ("20260901_120000", "20260929_160507", "20260915_080000"):
+        (tmp_path / name).mkdir()
+    (tmp_path / "stray.txt").write_text("not a snapshot")
+
+    assert [p.name for p in list_archives(tmp_path)] == [
+        "20260929_160507", "20260915_080000", "20260901_120000"]
+    assert _archive_label("20260929_160507") == "2026-09-29 16:05:07"
+    assert _archive_label("hand-made") == "hand-made"
+    assert list_archives(tmp_path / "missing") == []
+
+
+def test_run_id_is_file_safe_and_distinguishes_every_factor():
+    row = make_runs(n=1).iloc[0]
+    rid = run_id(row)
+    assert re.fullmatch(r"[A-Za-z0-9_.-]+", rid), rid
+    assert "rmsd2" in rid and "L0" in rid          # 2.0 -> "2", not "2.0"
+    for key, other in (("layer", 3), ("target", "mw"), ("prob_model", "mlp"),
+                       ("gnn_model_type", "DTI"), ("rmsd_threshold", 4.0),
+                       ("split_type", "scaffold-k-fold")):
+        changed = row.copy()
+        changed[key] = other
+        assert run_id(changed) != rid, key
+
+
+def test_parity_sidecars_are_written_cached_and_pruned(tmp_path):
+    csv = tmp_path / "ridge_predictions.csv"
+    pd.DataFrame({"y_true": [1.0, 2.0, np.nan, 4.0],
+                  "y_pred": [1.1, 1.9, 3.0, 3.5]}).to_csv(csv, index=False)
+    runs = make_runs(n=2).assign(predictions_path=[csv, tmp_path / "gone.csv"])
+    out = tmp_path / "side"
+    (out).mkdir()
+    (out / "stale.js").write_text("old")
+
+    ids = write_parity_sidecars(runs, out, "current")
+
+    assert ids.iloc[1] is None                      # CSV missing -> no sidecar
+    js = (out / f"{ids.iloc[0]}.js").read_text()
+    assert not (out / "stale.js").exists()
+    key, body = re.fullmatch(
+        rf"window\.{PARITY_CALLBACK}\((\"[^\"]+\"),(\{{.*\}})\);\n", js).groups()
+    assert json.loads(key) == f"current/{ids.iloc[0]}"
+    data = json.loads(body)
+    assert data == {"t": [1, 2, 4], "p": [1.1, 1.9, 3.5]}   # NaN row dropped
+
+    # unchanged CSV -> the sidecar is not rewritten
+    before = (out / f"{ids.iloc[0]}.js").stat().st_mtime_ns
+    write_parity_sidecars(runs, out, "current")
+    assert (out / f"{ids.iloc[0]}.js").stat().st_mtime_ns == before
+
+
+def test_payload_carries_the_parity_id_only_when_present():
+    assert "parity_id" not in build_payload(make_runs())["runs"][0]
+    runs = make_runs(n=2).assign(parity_id=["a", None])
+    records = build_payload(runs)["runs"]
+    assert records[0]["parity_id"] == "a" and records[1]["parity_id"] is None

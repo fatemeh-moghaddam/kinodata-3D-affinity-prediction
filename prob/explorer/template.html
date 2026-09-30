@@ -103,7 +103,9 @@ body {
 
 /* ---------- header ---------- */
 
-header { display: flex; flex-direction: column; gap: 6px; }
+header { display: flex; flex-direction: column; gap: 6px; position: relative; }
+.themebar { position: absolute; top: 0; right: 0; display: flex; align-items: center; gap: 8px; }
+@media (max-width: 720px) { .themebar { position: static; } }
 
 .eyebrow {
   font-family: "IBM Plex Mono", ui-monospace, monospace;
@@ -226,6 +228,22 @@ button.btn:hover, .dd-toggle:hover { border-color: var(--ink-muted); }
   font: inherit; font-size: 11.5px; background: none; border: none;
   color: var(--focus); cursor: pointer; padding: 2px 4px; border-radius: 3px;
 }
+
+/* source switch: Current | Archive, then which snapshot */
+.srcrow { display: flex; gap: 8px; align-items: center; }
+.seg {
+  display: inline-flex; border: 1px solid var(--border-hard);
+  border-radius: var(--radius); overflow: hidden;
+}
+.seg button {
+  font: inherit; font-size: 13px; color: var(--ink-2);
+  background: var(--surface-2); border: none; padding: 6px 12px;
+  min-height: 30px; cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--border-hard); }
+.seg button:hover:not([disabled]) { color: var(--ink); }
+.seg button[aria-pressed="true"] { background: var(--focus); color: #ffffff; }
+.seg button[disabled] { opacity: 0.45; cursor: default; }
 
 /* ---------- tabs ---------- */
 
@@ -405,7 +423,8 @@ footer code {
 <header>
   <div class="eyebrow">Linear probing sweep &middot; kinodata-3D</div>
   <h1>Probe Sweep Explorer</h1>
-  <p class="lede">Filter to the comparison you want, then read it four ways.</p>
+  <p class="lede">Filter to the comparison you want, then read it five ways.</p>
+  <div class="themebar" id="themebar"></div>
 </header>
 
 <div class="panel controls" id="controls"></div>
@@ -454,7 +473,21 @@ footer code {
 // Nothing below hard-codes a column name.
 var PAYLOAD = JSON.parse(document.getElementById("runs-data").textContent);
 var CONFIG = PAYLOAD.config;
-var RUNS = PAYLOAD.runs;
+
+// One run table per source: the live sweep (data/probing) and each archive
+// snapshot (data/probing_archive/<timestamp>). A payload from build_payload
+// alone has a single run list; wrap it so the page only deals in sources.
+var SOURCES = PAYLOAD.sources || [{
+  key: "current", label: "Current", kind: "current", path: CONFIG.source || "",
+  nRuns: CONFIG.nRuns, nDropped: CONFIG.nDropped || 0, runs: PAYLOAD.runs || []
+}];
+var SOURCE_BY_KEY = {};
+SOURCES.forEach(function (s) { SOURCE_BY_KEY[s.key] = s; });
+var ARCHIVES = SOURCES.filter(function (s) { return s.kind === "archive"; });
+
+// Reassigned by switchSource; everything below reads these two, never PAYLOAD.
+var SOURCE = SOURCE_BY_KEY[PAYLOAD.defaultSource] || SOURCES[0];
+var RUNS = SOURCE.runs;
 
 var FACTORS = CONFIG.factors;
 var FKEYS = FACTORS.map(function (f) { return f.key; });
@@ -537,7 +570,11 @@ function levelsOf(key, rows) {
 }
 
 var ALL_LEVELS = {};
-FKEYS.forEach(function (k) { ALL_LEVELS[k] = levelsOf(k, RUNS); });
+function indexLevels() {
+  ALL_LEVELS = {};
+  FKEYS.forEach(function (k) { ALL_LEVELS[k] = levelsOf(k, RUNS); });
+}
+indexLevels();
 
 // ─────────────────────────────────────────────────────────────
 // State
@@ -558,10 +595,21 @@ function pickFacet(name) {
 
 var D = CONFIG.defaults;
 
+// Parity panels may sit on any factor: there is no x-axis factor to exclude.
+function pickAnyFacet(name) {
+  return (name && FKEYS.indexOf(name) !== -1) ? name : "";
+}
+
 var state = {
+  source: SOURCE.key,
+  lastArchive: SOURCE.kind === "archive" ? SOURCE.key : (ARCHIVES[0] ? ARCHIVES[0].key : ""),
   metric: D.metric,
   view: "curves",
   filter: {},            // key -> {level:true}
+  parityRow: pickAnyFacet(D.parityRow),
+  parityCol: pickAnyFacet(D.parityCol),
+  parityDraw: D.parityDraw || "both",
+  parityScale: D.parityScale || "target",
   curveSeries: pickFactor(D.colourBy, 1),
   curveShape: pickFacet(D.shapeBy),
   curveFacetRow: pickFacet(D.facetRowBy),
@@ -577,23 +625,64 @@ var state = {
   pngScale: D.pngScale || 3,
   pngTheme: D.pngTheme || "light"
 };
-FKEYS.forEach(function (k) {
-  var sel = {};
-  ALL_LEVELS[k].forEach(function (v) { sel[String(v)] = true; });
-  state.filter[k] = sel;
-});
-// Open on a readable slice rather than the whole sweep at once; every other
-// level stays one click away in the filter menus. Set in build.py.
-Object.keys(CONFIG.defaults.filter || {}).forEach(function (k) {
-  if (!(k in state.filter)) return;
-  var wanted = CONFIG.defaults.filter[k], sel = {}, any = false;
-  ALL_LEVELS[k].forEach(function (v) {
-    var on = wanted.indexOf(String(v)) !== -1;
-    sel[String(v)] = on;
-    any = any || on;
+function initFilter() {
+  FKEYS.forEach(function (k) {
+    var sel = {};
+    ALL_LEVELS[k].forEach(function (v) { sel[String(v)] = true; });
+    state.filter[k] = sel;
   });
-  if (any) state.filter[k] = sel;   // ignore a default that matches nothing
-});
+  // Open on a readable slice rather than the whole sweep at once; every other
+  // level stays one click away in the filter menus. Set in build.py.
+  Object.keys(CONFIG.defaults.filter || {}).forEach(function (k) {
+    if (!(k in state.filter)) return;
+    var wanted = CONFIG.defaults.filter[k], sel = {}, any = false;
+    ALL_LEVELS[k].forEach(function (v) {
+      var on = wanted.indexOf(String(v)) !== -1;
+      sel[String(v)] = on;
+      any = any || on;
+    });
+    if (any) state.filter[k] = sel;   // ignore a default that matches nothing
+  });
+}
+initFilter();
+
+// Switching source keeps the slice you were looking at: a level that exists in
+// both keeps its tick, a level new to this source is ticked only if its whole
+// factor was, and a factor left with nothing ticked falls back to all.
+function switchSource(key) {
+  var next = SOURCE_BY_KEY[key];
+  if (!next || next === SOURCE) return;
+  var hadRuns = RUNS.length > 0;
+  var prevFilter = state.filter, prevLevels = ALL_LEVELS;
+
+  SOURCE = next;
+  RUNS = next.runs;
+  state.source = next.key;
+  if (next.kind === "archive") state.lastArchive = next.key;
+  indexLevels();
+
+  if (!hadRuns) {
+    state.filter = {};
+    initFilter();
+  } else {
+    state.filter = {};
+    FKEYS.forEach(function (k) {
+      var old = prevFilter[k] || {};
+      var allOn = (prevLevels[k] || []).every(function (v) { return old[String(v)]; });
+      var sel = {}, any = false;
+      ALL_LEVELS[k].forEach(function (v) {
+        var s = String(v);
+        var on = (s in old) ? !!old[s] : allOn;
+        sel[s] = on;
+        any = any || on;
+      });
+      if (!any) ALL_LEVELS[k].forEach(function (v) { sel[String(v)] = true; });
+      state.filter[k] = sel;
+    });
+  }
+  stampProvenance();
+  render();
+}
 
 function filtered() {
   return RUNS.filter(function (r) {
@@ -954,7 +1043,8 @@ function exportName(view, parts) {
     var on = ALL_LEVELS[k].filter(function (v) { return state.filter[k][String(v)]; });
     return String(on[0]);
   });
-  var bits = ["probe", view, state.metric].concat(parts || [], pinned);
+  var origin = SOURCE.kind === "archive" ? "archive-" + SOURCE.key : "";
+  var bits = ["probe", view, state.metric].concat(parts || [], pinned, [origin]);
   return bits.filter(Boolean)
              .join("_")
              .replace(/[^A-Za-z0-9_.-]+/g, "-")
@@ -971,7 +1061,9 @@ function attachExport(c, view, parts) {
 
   var themeSel = document.createElement("select");
   themeSel.setAttribute("aria-label", "PNG theme");
-  [["as-shown", "As shown"], ["light", "Light"], ["dark", "Dark"]].forEach(function (p) {
+  themeSel.title = "Theme of the exported PNG only. The page's own look is the " +
+                   "Page theme switch at the top.";
+  [["as-shown", "PNG: as shown"], ["light", "PNG: light"], ["dark", "PNG: dark"]].forEach(function (p) {
     var o = document.createElement("option");
     o.value = p[0]; o.textContent = p[1];
     if (p[0] === state.pngTheme) o.selected = true;
@@ -1156,9 +1248,74 @@ function closeAllDD() {
 document.addEventListener("click", closeAllDD);
 document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeAllDD(); });
 
+// Current | Archive, then which snapshot. Only drawn when there is a choice.
+function makeSourcePicker() {
+  var field = document.createElement("div");
+  field.className = "field";
+  var lab = document.createElement("span");
+  lab.className = "field-label";
+  lab.textContent = "Data";
+  var row = document.createElement("div");
+  row.className = "srcrow";
+
+  var seg = document.createElement("div");
+  seg.className = "seg";
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", "Data source");
+
+  var current = SOURCE_BY_KEY.current;
+  var curBtn = document.createElement("button");
+  curBtn.type = "button";
+  curBtn.textContent = "Current";
+  curBtn.setAttribute("aria-pressed", SOURCE.kind === "current" ? "true" : "false");
+  if (!current || !current.nRuns) {
+    curBtn.disabled = true;
+    curBtn.title = "No runs under data/probing when this page was built";
+  } else {
+    curBtn.title = current.nRuns + " runs under " + current.path;
+  }
+  curBtn.addEventListener("click", function () { switchSource("current"); });
+
+  var arcBtn = document.createElement("button");
+  arcBtn.type = "button";
+  arcBtn.textContent = "Archive";
+  arcBtn.setAttribute("aria-pressed", SOURCE.kind === "archive" ? "true" : "false");
+  if (!ARCHIVES.length) {
+    arcBtn.disabled = true;
+    arcBtn.title = "No archive snapshots when this page was built";
+  } else {
+    arcBtn.title = ARCHIVES.length + " snapshot(s) under data/probing_archive";
+  }
+  arcBtn.addEventListener("click", function () {
+    switchSource(state.lastArchive || ARCHIVES[0].key);
+  });
+
+  seg.appendChild(curBtn); seg.appendChild(arcBtn);
+  row.appendChild(seg);
+
+  if (SOURCE.kind === "archive") {
+    var sel = document.createElement("select");
+    sel.setAttribute("aria-label", "Archive snapshot");
+    ARCHIVES.forEach(function (a) {
+      var o = document.createElement("option");
+      o.value = a.key;
+      o.textContent = a.label + " · " + a.nRuns + " runs";
+      if (a.key === SOURCE.key) o.selected = true;
+      sel.appendChild(o);
+    });
+    sel.addEventListener("change", function () { switchSource(sel.value); });
+    row.appendChild(sel);
+  }
+
+  field.appendChild(lab); field.appendChild(row);
+  return field;
+}
+
 function renderControls() {
   var host = document.getElementById("controls");
   host.innerHTML = "";
+
+  if (SOURCES.length > 1) host.appendChild(makeSourcePicker());
 
   host.appendChild(makeSelect("Metric", state.metric,
     METRIC_ORDER.map(function (k) { return { value: k, label: METRICS[k].label }; }),
@@ -1257,6 +1414,7 @@ var VIEWS = [
   { key: "curves", label: "Depth curves" },
   { key: "matrix", label: "Coverage matrix" },
   { key: "rank",   label: "Ranked intervals" },
+  { key: "parity", label: "Parity" },
   { key: "table",  label: "Table" }
 ];
 
@@ -1417,7 +1575,8 @@ function drawStar(g, cx, cy, n, r) {
 
 // Names each unassigned factor and offers the ways out, so the choice is the
 // reader's rather than a silent mean.
-function conflictBanner(free, buttons) {
+// `tail` replaces the closing clause, for views where the collision is not a mark.
+function conflictBanner(free, buttons, tail) {
   var d = document.createElement("div");
   d.className = "notice choose";
 
@@ -1430,8 +1589,8 @@ function conflictBanner(free, buttons) {
   var head = document.createElement("div");
   head.innerHTML = free.map(function (f) {
     return "<b>" + escapeHtml(FLABEL[f.key]) + "</b> has " + f.n + " levels in view and no axis";
-  }).join("; ") + " &mdash; up to " + per +
-    " runs land on the same mark, flagged with a red star ★.";
+  }).join("; ") + " &mdash; " + (tail ||
+    "up to " + per + " runs land on the same mark, flagged with a red star ★.");
   body.appendChild(head);
 
   var acts = document.createElement("div");
@@ -2017,7 +2176,10 @@ function padDomain(lo, hi, m) {
 function emptyBox() {
   var d = document.createElement("div");
   d.className = "empty";
-  d.textContent = "No runs match the current filters. Widen a filter above.";
+  d.textContent = RUNS.length
+    ? "No runs match the current filters. Widen a filter above."
+    : "No probe runs under " + SOURCE.path + " when this page was built." +
+      (ARCHIVES.length ? " Switch to Archive above." : "");
   return d;
 }
 
@@ -2366,11 +2528,455 @@ function viewRank(rows) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// View: parity
+// ─────────────────────────────────────────────────────────────
+//
+// Predictions are not in the payload -- several thousand points per run would
+// make the page hundreds of MB. build.py writes each run's (y_true, y_pred) to
+// its own script, <parityDir>/<source>/<run id>.js, which calls
+// window.__probeParity. A script element loads from file:// where fetch() is
+// blocked, so this stays serverless; a run is only loaded once it is plotted.
+
+var PARITY = {};        // "<source>/<run id>" -> { status, data, stats, range }
+var PARITY_TOKEN = 0;   // the latest parity render; stale load callbacks skip
+
+window.__probeParity = function (key, data) {
+  var e = PARITY[key] || (PARITY[key] = {});
+  e.data = data;
+  e.status = "ok";
+};
+
+function parityEntry(r) {
+  return r.parity_id ? PARITY[SOURCE.key + "/" + r.parity_id] || null : null;
+}
+
+function loadParity(r) {
+  var key = SOURCE.key + "/" + r.parity_id;
+  var e = PARITY[key] || (PARITY[key] = { status: "loading" });
+  if (e.promise) return e.promise;
+  if (e.status === "ok") return (e.promise = Promise.resolve());
+  e.promise = new Promise(function (resolve) {
+    var s = document.createElement("script");
+    s.src = CONFIG.parityDir + "/" + encodeURIComponent(SOURCE.key) + "/" +
+            encodeURIComponent(r.parity_id) + ".js";
+    function done() {
+      if (e.status !== "ok") e.status = "error";
+      s.remove();
+      resolve();
+    }
+    s.onload = done;
+    s.onerror = done;
+    document.head.appendChild(s);
+  });
+  return e.promise;
+}
+
+// Computed once per run from the plotted points.
+function parityStats(e) {
+  if (e.stats) return e.stats;
+  var t = e.data.t, p = e.data.p, n = t.length, i;
+  var mt = 0, mp = 0, lo = Infinity, hi = -Infinity;
+  for (i = 0; i < n; i++) {
+    mt += t[i]; mp += p[i];
+    lo = Math.min(lo, t[i], p[i]); hi = Math.max(hi, t[i], p[i]);
+  }
+  mt /= n; mp /= n;
+  var stt = 0, spp = 0, stp = 0, sse = 0, sae = 0;
+  for (i = 0; i < n; i++) {
+    var dt = t[i] - mt, dp = p[i] - mp, err = p[i] - t[i];
+    stt += dt * dt; spp += dp * dp; stp += dt * dp; sse += err * err; sae += Math.abs(err);
+  }
+  e.range = [lo, hi];
+  e.stats = {
+    n: n, meanTrue: mt,
+    r2: stt > 0 ? 1 - sse / stt : null,
+    rmse: n ? Math.sqrt(sse / n) : null,
+    mae: n ? sae / n : null,
+    pearson: stt > 0 && spp > 0 ? stp / Math.sqrt(stt * spp) : null,
+    sdRatio: stt > 0 ? Math.sqrt(spp / stt) : null
+  };
+  return e.stats;
+}
+
+var PARITY_DRAW = [
+  { value: "density", label: "Dots, coloured by density" },
+  { value: "points",  label: "Plain dots" }
+];
+if (!PARITY_DRAW.some(function (o) { return o.value === state.parityDraw; })) {
+  state.parityDraw = "density";
+}
+var PARITY_MAX_PANELS = 36;
+
+function viewParity(rows) {
+  var host = document.createElement("div");
+  host.style.display = "flex";
+  host.style.flexDirection = "column";
+  host.style.gap = "14px";
+
+  var facetChoices = [{ value: "", label: "None" }].concat(
+    FACTORS.map(function (f) { return { value: f.key, label: f.label }; }));
+
+  var opts = document.createElement("div");
+  opts.className = "panel controls";
+  opts.appendChild(makeSelect("Panel rows per", state.parityRow, facetChoices, function (v) {
+    if (v && v === state.parityCol) state.parityCol = state.parityRow;
+    state.parityRow = v; render();
+  }));
+  opts.appendChild(makeSelect("Panel columns per", state.parityCol, facetChoices, function (v) {
+    if (v && v === state.parityRow) state.parityRow = state.parityCol;
+    state.parityCol = v; render();
+  }));
+  opts.appendChild(makeSelect("Draw as", state.parityDraw, PARITY_DRAW,
+    function (v) { state.parityDraw = v; render(); }));
+  opts.appendChild(makeSelect("Axis range", state.parityScale,
+    [{ value: "target", label: "Shared within a target" },
+     { value: "panel",  label: "Per panel" }],
+    function (v) { state.parityScale = v; render(); }));
+  host.appendChild(opts);
+
+  var c = card("Predicted against true, one run per panel",
+    "On the dashed diagonal a prediction is exact. A cloud squashed flat toward " +
+    "the dotted mean line is a probe falling back on the average.");
+
+  if (!CONFIG.parityDir) {
+    c.appendChild(notice("This page was built with <code>--no-parity</code>, so it " +
+      "carries no predictions. Rebuild without that flag to use this tab.", true));
+    host.appendChild(c);
+    return host;
+  }
+  if (!rows.length) { c.appendChild(emptyBox()); host.appendChild(c); return host; }
+
+  var rKey = state.parityRow, cKey = state.parityCol;
+
+  // A parity plot is one run; there is no honest way to overlay or average
+  // several, so every factor off the panel axes has to be pinned first.
+  var free = freeFactors(rows, [rKey, cKey].filter(Boolean));
+  if (free.length) {
+    var assignFacet = function (slot, key) {
+      var mine = slot === "row" ? "parityRow" : "parityCol";
+      var other = slot === "row" ? "parityCol" : "parityRow";
+      var displaced = state[mine];
+      if (state[other] === key) state[other] = "";
+      state[mine] = key;
+      if (displaced && displaced !== key && !state[other]) state[other] = displaced;
+      render();
+    };
+    var buttons = [];
+    free.forEach(function (f) {
+      buttons.push({ label: "Rows per " + FLABEL[f.key],
+                     onClick: function () { assignFacet("row", f.key); } });
+      buttons.push({ label: "Columns per " + FLABEL[f.key],
+                     onClick: function () { assignFacet("col", f.key); } });
+      buttons.push({ label: "Keep one " + FLABEL[f.key],
+                     onClick: function () { keepFirstLevel(f.key, rows); } });
+    });
+    c.appendChild(conflictBanner(free, buttons,
+      "a parity plot shows a single run, so each panel would hold several. " +
+      "Put it on a panel axis or keep one level."));
+    host.appendChild(c);
+    return host;
+  }
+
+  var twoD = !!rKey && !!cKey;
+  var rLevels = rKey ? levelsOf(rKey, rows) : [null];
+  var cLevels = cKey ? levelsOf(cKey, rows) : [null];
+
+  var cells = [];
+  if (twoD) {
+    rLevels.forEach(function (rv, i) {
+      cLevels.forEach(function (cv, j) { cells.push({ rv: rv, cv: cv, i: i, j: j }); });
+    });
+  } else {
+    (rKey ? rLevels : cLevels).forEach(function (v) {
+      cells.push(rKey ? { rv: v, cv: null } : { rv: null, cv: v });
+    });
+  }
+  cells.forEach(function (cell) {
+    cell.run = rows.filter(function (r) {
+      return (cell.rv === null || String(r[rKey]) === String(cell.rv)) &&
+             (cell.cv === null || String(r[cKey]) === String(cell.cv));
+    })[0] || null;
+  });
+
+  if (cells.length > PARITY_MAX_PANELS) {
+    c.appendChild(notice("That is " + cells.length + " panels; this tab draws at most " +
+      PARITY_MAX_PANELS + " at once, since each loads several thousand points. " +
+      "Filter a factor down.", true));
+    host.appendChild(c);
+    return host;
+  }
+
+  // Fetch what is missing, then redraw once, when all of it has arrived.
+  var token = ++PARITY_TOKEN;
+  var pending = [];
+  cells.forEach(function (cell) {
+    var r = cell.run;
+    if (!r || !r.parity_id) return;
+    var e = parityEntry(r);
+    if (!e || e.status === "loading") pending.push(loadParity(r));
+  });
+  if (pending.length) {
+    Promise.all(pending).then(function () {
+      if (token === PARITY_TOKEN && state.view === "parity") render();
+    });
+  }
+
+  // Shared-within-target ranges: panels of one target get one square range,
+  // so layers and models compare by eye; targets keep their own units.
+  var targetRange = {};
+  cells.forEach(function (cell) {
+    var e = cell.run && parityEntry(cell.run);
+    if (!e || e.status !== "ok" || !e.data.t.length) return;
+    parityStats(e);
+    var k = String(cell.run.target), rg = targetRange[k];
+    targetRange[k] = rg ? [Math.min(rg[0], e.range[0]), Math.max(rg[1], e.range[1])]
+                        : e.range.slice();
+  });
+  function limsFor(cell, e) {
+    var rg = state.parityScale === "target" ? targetRange[String(cell.run.target)] : e.range;
+    var lo = rg[0], hi = rg[1];
+    if (lo === hi) { lo -= 0.5; hi += 0.5; }
+    var pad = (hi - lo) * 0.04;
+    return [lo - pad, hi + pad];
+  }
+
+  var M = { t: twoD ? 10 : 26, r: 14, b: 40, l: 52 };
+  var GUT = twoD ? 34 : 0, TOP = twoD ? 28 : 0;
+  var MIN_PW = 170;
+  var avail = Math.max(320, availableChartWidth());
+  var inner = Math.max(240, avail - GUT);
+  var nCols, nRows;
+  if (twoD) {
+    nRows = rLevels.length; nCols = cLevels.length;
+  } else {
+    var fit = Math.max(1, Math.floor(inner / (MIN_PW + M.l + M.r)));
+    nCols = Math.min(cells.length, fit, 4);
+    nRows = Math.ceil(cells.length / nCols);
+    cells.forEach(function (cell, k) { cell.i = Math.floor(k / nCols); cell.j = k % nCols; });
+  }
+  var single = cells.length === 1;
+  var PW = Math.max(MIN_PW, Math.min(single ? 440 : 320,
+                                     Math.floor(inner / nCols) - M.l - M.r));
+  var PH = PW;   // square: the diagonal has to sit at 45°
+  var W = GUT + nCols * (PW + M.l + M.r);
+  var H = TOP + nRows * (PH + M.t + M.b);
+
+  var scroll = document.createElement("div");
+  scroll.className = "scroller";
+  var svg = el("svg", { width: W, height: H, viewBox: "0 0 " + W + " " + H, role: "img",
+                        "aria-label": "Predicted against true values, one panel per run" +
+                          (rKey ? ", rows " + FLABEL[rKey] : "") +
+                          (cKey ? ", columns " + FLABEL[cKey] : "") });
+
+  if (twoD) {
+    cLevels.forEach(function (cv, j) {
+      el("text", { x: GUT + j * (PW + M.l + M.r) + M.l + PW / 2, y: 18,
+                   "text-anchor": "middle", class: "facet-title" }, svg)
+        .textContent = FLABEL[cKey] + " = " + labelOf(cKey, cv);
+    });
+    rLevels.forEach(function (rv, i) {
+      var cy = TOP + i * (PH + M.t + M.b) + M.t + PH / 2;
+      el("text", { x: 14, y: cy, "text-anchor": "middle", class: "facet-title",
+                   transform: "rotate(-90,14," + cy + ")" }, svg)
+        .textContent = FLABEL[rKey] + " = " + labelOf(rKey, rv);
+    });
+  }
+
+  cells.forEach(function (cell) {
+    var gx = GUT + cell.j * (PW + M.l + M.r) + M.l;
+    var gy = TOP + cell.i * (PH + M.t + M.b) + M.t;
+    var g = el("g", { transform: "translate(" + gx + "," + gy + ")" }, svg);
+    var title = panelTitle(cell);
+    if (!twoD && title) {
+      el("text", { x: 0, y: -10, class: "facet-title" }, g).textContent = title;
+    }
+
+    var r = cell.run;
+    if (!r) return placeholder(g, "no run");
+    if (!r.parity_id) return placeholder(g, "no predictions saved");
+    var e = parityEntry(r);
+    if (!e || e.status === "loading") return placeholder(g, "loading…");
+    if (e.status === "error") return placeholder(g, "sidecar missing — rebuild the page");
+    if (!e.data.t.length) return placeholder(g, "no finite predictions");
+
+    drawParityPanel(g, r, e, limsFor(cell, e), PW, PH);
+    var hit = el("rect", { x: 0, y: 0, width: PW, height: PH, fill: "transparent" }, g);
+    hookTip(hit, function () { return runTip([r], escapeHtml(title || "This run")); });
+  });
+
+  function panelTitle(cell) {
+    var bits = [];
+    if (cell.rv !== null) bits.push(FLABEL[rKey] + " = " + labelOf(rKey, cell.rv));
+    if (cell.cv !== null) bits.push(FLABEL[cKey] + " = " + labelOf(cKey, cell.cv));
+    return bits.join(" · ");
+  }
+
+  function placeholder(g, text) {
+    el("rect", { x: 0, y: 0, width: PW, height: PH, rx: 4, fill: "none",
+                 stroke: cssvar("--grid"), "stroke-width": 1, "stroke-dasharray": "3 3" }, g);
+    el("text", { x: PW / 2, y: PH / 2 + 4, "text-anchor": "middle", class: "tick" }, g)
+      .textContent = text;
+  }
+
+  scroll.appendChild(svg);
+  c.appendChild(scroll);
+  attachExport(c, "parity", [rKey ? "rows-" + rKey : "", cKey ? "cols-" + cKey : "",
+                             state.parityDraw]);
+
+  c.appendChild(howto([
+    "Each panel is one run's held-out test predictions &mdash; the same rows its " +
+    "metrics were computed on.",
+    "<b>Dashed red</b> is y = x, an exact prediction. <b>Dotted</b> is the mean of the " +
+    "true values: a probe that only ever predicts it scores R² = 0.",
+    "<b>R²</b> and <b>MAE</b> are the numbers in the run's summary.json. <b>r</b> " +
+    "(Pearson) and <b>σ̂/σ</b> (spread of the predictions over spread of the truth) are " +
+    "computed from the plotted points; σ̂/σ well below 1 means predictions shrink " +
+    "toward the mean.",
+    "<b>Dot colour</b> is how crowded that spot is (a smoothed local count, square-root " +
+    "scaled): darker means more ligands nearby. Every dot is still one ligand.",
+    "<b>Axis range</b>: <i>Shared within a target</i> gives every panel of a target the " +
+    "same square range, so they compare by eye. <i>Per panel</i> zooms each to its own data.",
+    "Predictions load from <code>" + escapeHtml(CONFIG.parityDir) + "/</code> beside " +
+    "this page. Move the two together."
+  ]));
+  host.appendChild(c);
+  return host;
+}
+
+// 3x3 mean filter over a G x G grid, edges averaged over the cells that exist.
+function boxBlur(src, G) {
+  var out = new Float64Array(G * G);
+  for (var y = 0; y < G; y++) {
+    for (var x = 0; x < G; x++) {
+      var sum = 0, cnt = 0;
+      for (var dy = -1; dy <= 1; dy++) {
+        for (var dx = -1; dx <= 1; dx++) {
+          var yy = y + dy, xx = x + dx;
+          if (yy < 0 || yy >= G || xx < 0 || xx >= G) continue;
+          sum += src[yy * G + xx]; cnt++;
+        }
+      }
+      out[y * G + x] = sum / cnt;
+    }
+  }
+  return out;
+}
+
+function drawParityPanel(g, r, e, lims, PW, PH) {
+  var lo = lims[0], hi = lims[1], span = hi - lo;
+  function sx(v) { return (v - lo) / span * PW; }
+  function sy(v) { return PH - (v - lo) / span * PH; }
+
+  niceTicks(lo, hi, 5).forEach(function (t) {
+    if (t < lo || t > hi) return;
+    el("line", { x1: sx(t), y1: 0, x2: sx(t), y2: PH, class: "gridline" }, g);
+    el("line", { x1: 0, y1: sy(t), x2: PW, y2: sy(t), class: "gridline" }, g);
+    el("text", { x: sx(t), y: PH + 16, "text-anchor": "middle", class: "tick" }, g)
+      .textContent = tickFmt(t);
+    el("text", { x: -7, y: sy(t) + 4, "text-anchor": "end", class: "tick" }, g)
+      .textContent = tickFmt(t);
+  });
+  el("line", { x1: 0, y1: PH, x2: PW, y2: PH, class: "axisline" }, g);
+  el("line", { x1: 0, y1: 0, x2: 0, y2: PH, class: "axisline" }, g);
+  el("text", { x: PW / 2, y: PH + 33, "text-anchor": "middle", class: "axlabel" }, g)
+    .textContent = "true";
+  el("text", { x: -40, y: PH / 2, "text-anchor": "middle", class: "axlabel",
+               transform: "rotate(-90,-40," + (PH / 2) + ")" }, g).textContent = "predicted";
+
+  var t = e.data.t, p = e.data.p, n = t.length, i;
+  var mode = state.parityDraw;
+
+  // Each circle is a subpath, so a whole panel's points cost one node per path.
+  var rr = n > 3000 ? 1.6 : 2.1;
+  var arc = "a" + rr + "," + rr + " 0 1,0 ";
+  function dot(i) {
+    return "M" + (sx(t[i]) - rr).toFixed(1) + "," + sy(p[i]).toFixed(1) +
+           arc + (2 * rr) + ",0" + arc + (-2 * rr) + ",0";
+  }
+
+  if (mode === "density") {
+    // Colour every dot by how crowded its neighbourhood is: a fine 2-D count,
+    // smoothed twice, read back at each point. Drawn lightest first so the
+    // dense core sits on top, and every point stays an individual dot.
+    var G = 64, grid = new Float64Array(G * G);
+    var gxs = new Float64Array(n), gys = new Float64Array(n);
+    for (i = 0; i < n; i++) {
+      gxs[i] = (t[i] - lo) / span * G;
+      gys[i] = (p[i] - lo) / span * G;
+      var bx = Math.min(G - 1, Math.max(0, Math.floor(gxs[i])));
+      var by = Math.min(G - 1, Math.max(0, Math.floor(gys[i])));
+      grid[by * G + bx] += 1;
+    }
+    grid = boxBlur(boxBlur(grid, G), G);
+    var dmax = 0;
+    for (i = 0; i < grid.length; i++) if (grid[i] > dmax) dmax = grid[i];
+
+    // Bilinear read between cell centres: colour boundaries follow the data as
+    // smooth curves instead of the grid's staircase.
+    var at = function (gx, gy) {
+      gx = Math.min(G - 1, Math.max(0, gx - 0.5));
+      gy = Math.min(G - 1, Math.max(0, gy - 0.5));
+      var x0 = Math.floor(gx), y0 = Math.floor(gy);
+      var x1 = Math.min(G - 1, x0 + 1), y1 = Math.min(G - 1, y0 + 1);
+      var fx = gx - x0, fy = gy - y0;
+      return (grid[y0 * G + x0] * (1 - fx) + grid[y0 * G + x1] * fx) * (1 - fy) +
+             (grid[y1 * G + x0] * (1 - fx) + grid[y1 * G + x1] * fx) * fy;
+    };
+
+    var shades = SEQ.slice(4).map(cssvar);   // skip the palest: they vanish on white
+    var buckets = shades.map(function () { return []; });
+    for (i = 0; i < n; i++) {
+      var level = Math.sqrt(at(gxs[i], gys[i]) / dmax);
+      buckets[Math.min(shades.length - 1, Math.floor(level * shades.length))].push(dot(i));
+    }
+    buckets.forEach(function (ds, b) {
+      if (ds.length) el("path", { d: ds.join(""), fill: shades[b], "fill-opacity": 0.9 }, g);
+    });
+  } else {
+    var d = [];
+    for (i = 0; i < n; i++) d.push(dot(i));
+    el("path", { d: d.join(""), fill: "none", stroke: cssvar("--ink"),
+                 "stroke-width": 0.6, "stroke-opacity": 0.55 }, g);
+  }
+
+  var st = parityStats(e);
+  el("line", { x1: 0, y1: PH, x2: PW, y2: 0, stroke: cssvar("--critical"),
+               "stroke-width": 1.3, "stroke-dasharray": "5 4" }, g);
+  if (st.meanTrue >= lo && st.meanTrue <= hi) {
+    el("line", { x1: 0, y1: sy(st.meanTrue), x2: PW, y2: sy(st.meanTrue),
+                 stroke: cssvar("--ink-2"), "stroke-width": 1.2,
+                 "stroke-dasharray": "1.5 3" }, g);
+  }
+
+  // summary.json is authoritative for R²/MAE; fall back to the points if absent
+  function num(v, dec) { return (v === null || v === undefined) ? "—" : v.toFixed(dec); }
+  var lines = [
+    ["R²",   num(r.r2 !== null && r.r2 !== undefined ? r.r2 : st.r2, 3)],
+    ["MAE",  num(r.mae !== null && r.mae !== undefined ? r.mae : st.mae, 3)],
+    ["r",    num(st.pearson, 3)],
+    ["σ̂/σ",  num(st.sdRatio, 2)],
+    ["n",    String(n)]
+  ];
+  var box = el("g", { transform: "translate(6,6)" }, g);
+  el("rect", { x: 0, y: 0, width: 96, height: lines.length * 13 + 8, rx: 3,
+               fill: cssvar("--surface"), "fill-opacity": 0.88,
+               stroke: cssvar("--axis"), "stroke-width": 1 }, box);
+  var ink = cssvar("--ink");
+  lines.forEach(function (ln, li) {
+    var y = 15 + li * 13;
+    el("text", { x: 7, y: y, class: "tick" }, box).textContent = ln[0];
+    el("text", { x: 89, y: y, "text-anchor": "end", class: "tick",
+                 style: "fill:" + ink }, box).textContent = ln[1];
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
 // View: table
 // ─────────────────────────────────────────────────────────────
 
-// factors, then every metric (with its interval, if it has one), then extras
-var TABLE_COLS = (function () {
+// factors, then every metric (with its interval, if it has one), then extras.
+// Rebuilt per render: which factor columns are numeric depends on the source.
+function tableCols() {
   var cols = FACTORS.map(function (f) {
     // right-align a factor column when its levels are numeric, whatever it is called
     var numeric = ALL_LEVELS[f.key].length > 0 &&
@@ -2397,9 +3003,10 @@ var TABLE_COLS = (function () {
     seen[c.key] = true;
   });
   return cols;
-})();
+}
 
 function viewTable(rows) {
+  var TABLE_COLS = tableCols();
   var host = document.createElement("div");
   var c = card("All runs in view",
     "The rows the charts are drawing. Click a header to sort.");
@@ -2512,6 +3119,7 @@ function render() {
     state.view === "curves" ? viewCurves(rows) :
     state.view === "matrix" ? viewMatrix(rows) :
     state.view === "rank"   ? viewRank(rows)   :
+    state.view === "parity" ? viewParity(rows) :
                               viewTable(rows);
   host.appendChild(node);
 }
@@ -2528,16 +3136,77 @@ window.addEventListener("resize", function () {
   resizeTimer = setTimeout(render, 150);
 });
 
-(function stampProvenance() {
+// ─────────────────────────────────────────────────────────────
+// Page theme
+// ─────────────────────────────────────────────────────────────
+//
+// Auto follows the OS/browser setting through the prefers-color-scheme rules
+// in the stylesheet; Light/Dark pin it with data-theme on <html>. This is the
+// page's own look -- each chart card's theme menu only affects its PNG export,
+// and withTheme puts this choice back after an export.
+
+var THEME_KEY = "probeExplorer.pageTheme";
+
+function readStoredTheme() {
+  try {
+    var v = window.localStorage.getItem(THEME_KEY);
+    return (v === "light" || v === "dark") ? v : "auto";
+  } catch (e) { return "auto"; }
+}
+
+function applyPageTheme(mode) {
+  var root = document.documentElement;
+  if (mode === "light" || mode === "dark") root.setAttribute("data-theme", mode);
+  else root.removeAttribute("data-theme");
+}
+
+function renderThemeBar() {
+  var host = document.getElementById("themebar");
+  if (!host) return;
+  host.innerHTML = "";
+  var lab = document.createElement("span");
+  lab.className = "eyebrow";
+  lab.textContent = "Page theme";
+  var seg = document.createElement("div");
+  seg.className = "seg";
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", "Page theme");
+  [["auto", "Auto"], ["light", "Light"], ["dark", "Dark"]].forEach(function (p) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.textContent = p[1];
+    b.setAttribute("aria-pressed", state.pageTheme === p[0] ? "true" : "false");
+    if (p[0] === "auto") b.title = "Follow the system / browser setting";
+    b.addEventListener("click", function () {
+      state.pageTheme = p[0];
+      try { window.localStorage.setItem(THEME_KEY, p[0]); } catch (e) { /* private window */ }
+      applyPageTheme(p[0]);
+      renderThemeBar();
+      render();   // series colours are baked into the SVG when drawn
+    });
+    seg.appendChild(b);
+  });
+  host.appendChild(lab);
+  host.appendChild(seg);
+}
+
+state.pageTheme = readStoredTheme();
+applyPageTheme(state.pageTheme);
+renderThemeBar();
+
+function stampProvenance() {
   var host = document.getElementById("provenance");
   if (!host) return;
-  host.innerHTML = "<b>This page.</b> Built by <code>prob/explorer/build.py</code> from " +
-    CONFIG.nRuns + " runs indexed under <code>" + escapeHtml(CONFIG.source) + "</code>" +
-    (CONFIG.generated ? " on " + escapeHtml(CONFIG.generated) : "") +
+  var others = SOURCES.length - 1;
+  host.innerHTML = "<b>This page.</b> Built by <code>prob/explorer/build.py</code>" +
+    (CONFIG.generated ? " on " + escapeHtml(CONFIG.generated) : "") + ". Showing " +
+    SOURCE.nRuns + " runs indexed under <code>" + escapeHtml(SOURCE.path) + "</code>" +
+    (others ? "; " + others + " other source(s) are one click away under <b>Data</b>" : "") +
     ". Rebuild with <code>uv run python -m prob.explorer</code>." +
-    (CONFIG.nDropped ? " " + CONFIG.nDropped + " further run(s) were set aside for " +
+    (SOURCE.nDropped ? " " + SOURCE.nDropped + " further run(s) were set aside for " +
       "missing a factor value, so they cannot be placed on any axis." : "");
-})();
+}
+stampProvenance();
 
 render();
 
@@ -2546,7 +3215,9 @@ render();
 window.probeExplorer = {
   state: state,
   config: CONFIG,
-  runs: RUNS,
+  sources: SOURCES,
+  get runs() { return RUNS; },
+  switchSource: switchSource,
   render: render,
   svgToDataUrl: svgToDataUrl,
   svgToPngBlob: svgToPngBlob,

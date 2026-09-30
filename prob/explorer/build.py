@@ -1,8 +1,18 @@
 """Build the standalone Probe Sweep Explorer page from the runs on disk.
 
-The page is a single self-contained HTML file: `template.html` with one JSON
-payload injected into it. There is no server, no build toolchain and no CDN --
-open the output with a browser.
+The page is one HTML file: `template.html` with one JSON payload injected into
+it. There is no server, no build toolchain and no CDN -- open the output with a
+browser.
+
+The payload carries one run table per *source*: the live sweep under
+data/probing and every timestamped snapshot under data/probing_archive (see
+prob/cluster/archive_probe_results.sh). The page switches between them.
+
+Parity plots need every prediction, which is far too much to inline, so each
+run's (y_true, y_pred) goes into its own small script next to the page,
+<page stem>_parity/<source>/<run id>.js, loaded only when that run is plotted.
+A <script src> works from file:// where fetch() does not, which is what keeps
+this serverless. Move the page and that folder together.
 
 Everything the page knows about the sweep comes from that payload, so the
 factors, the metrics, the table columns and the opening filter are declared
@@ -21,6 +31,7 @@ Usage
     uv run python -m prob.explorer
     uv run python -m prob.explorer --out /tmp/affinity.html --target affinity
     uv run python -m prob.explorer --gnn CGNN-3D --split random-k-fold --open
+    uv run python -m prob.explorer --no-archives --no-parity
 
 From a notebook:
 
@@ -32,8 +43,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -41,12 +53,23 @@ from typing import Any, Iterable, Sequence
 import numpy as np
 import pandas as pd
 
-from prob.paths_and_io import attach_run_metrics, find_probe_runs, get_data_dir
+from prob.paths_and_io import (
+    attach_run_metrics,
+    find_probe_runs,
+    get_data_dir,
+    load_run_predictions,
+)
 
 TEMPLATE_PATH = Path(__file__).with_name("template.html")
 PLACEHOLDER = "__RUNS_JSON__"
 
 DEFAULT_OUT = "probe_explorer.html"
+
+ARCHIVE_DIRNAME = "probing_archive"   # data/probing_archive/<timestamp>/
+ARCHIVE_STAMP = "%Y%m%d_%H%M%S"        # the name archive_probe_results.sh gives it
+
+PARITY_SUFFIX = "_parity"              # <page stem>_parity/<source>/<run id>.js
+PARITY_CALLBACK = "__probeParity"      # the global each sidecar calls
 
 
 # ─────────────────────────────────────────────────────────────
@@ -186,7 +209,15 @@ DEFAULT_VIEW = {
     "matrixRow": "target",
     "matrixCol": "layer",
 
-    # ---- Both tabs --------------------------------------------------------
+    # ---- Parity tab -------------------------------------------------------
+    # One run per panel, so every factor not on a panel axis has to be pinned
+    # to a single level; the page asks when one is not. "" = axis unset.
+    "parityRow": "gnn_model_type",
+    "parityCol": "layer",
+    "parityDraw": "density",      # "density" (dots coloured by density) | "points"
+    "parityScale": "target",      # "target" (shared within a target) | "panel"
+
+    # ---- Depth curves and coverage matrix ---------------------------------
     # What to do when several runs land on one mark because a factor was left
     # off every channel. "split" draws them separately and averages nothing;
     # "break" refuses to place a value; "mean"/"median" collapse but stay
@@ -248,6 +279,147 @@ def drop_incomplete(runs: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return runs[~incomplete].copy(), runs[incomplete].copy()
 
 
+@dataclass(frozen=True)
+class Source:
+    """One probing directory the page can switch to: the live sweep or an archive.
+
+    `runs` is already through `drop_incomplete`; `n_dropped` says how many were
+    set aside so the page can repeat it.
+    """
+
+    key: str        # stable id, also the sidecar sub-folder name
+    label: str      # what the picker shows
+    kind: str       # "current" | "archive"
+    path: Path
+    runs: pd.DataFrame
+    n_dropped: int = 0
+
+
+def default_archive_root() -> Path:
+    return get_data_dir(prob=False) / ARCHIVE_DIRNAME
+
+
+def list_archives(archive_root: str | Path) -> list[Path]:
+    """Archive snapshots, newest first (the timestamp names sort by time)."""
+    archive_root = Path(archive_root)
+    if not archive_root.is_dir():
+        return []
+    return sorted((p for p in archive_root.iterdir() if p.is_dir()),
+                  key=lambda p: p.name, reverse=True)
+
+
+def _archive_label(name: str) -> str:
+    """'20260929_160507' -> '2026-09-29 16:05:07'; any other name as-is."""
+    try:
+        return datetime.strptime(name, ARCHIVE_STAMP).strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return name
+
+
+def _safe_name(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", str(text)).strip("-") or "x"
+
+
+def collect_sources(
+        root: str | Path | None = None,
+        *,
+        archive_root: str | Path | None = None,
+        archives: bool = True,
+        **filters: Any,
+    ) -> list[Source]:
+    """The live sweep plus every archive snapshot, each indexed with `collect_runs`.
+
+    The live source is always listed -- empty right after an archive run, which
+    the page shows rather than hides -- while an archive with nothing matching
+    `filters` is left out.
+    """
+    root = Path(root) if root is not None else get_data_dir(prob=True)
+    places = [("current", "Current", "current", root)]
+    if archives:
+        a_root = Path(archive_root) if archive_root is not None else default_archive_root()
+        places += [(_safe_name(p.name), _archive_label(p.name), "archive", p)
+                   for p in list_archives(a_root)]
+
+    sources = []
+    for key, label, kind, path in places:
+        runs = collect_runs(root=path, **filters) if path.is_dir() else pd.DataFrame()
+        usable, dropped = drop_incomplete(runs)
+        if kind == "archive" and usable.empty:
+            continue
+        sources.append(Source(key, label, kind, path, usable, len(dropped)))
+    return sources
+
+
+# ─────────────────────────────────────────────────────────────
+# Parity sidecars
+# ─────────────────────────────────────────────────────────────
+
+
+def run_id(row: Any) -> str:
+    """A file-safe id from a run's factors, stable across rebuilds."""
+    rmsd = row["rmsd_threshold"]
+    parts = [row["gnn_model_type"], f"rmsd{float(rmsd):g}", row["split_type"],
+             row["target"], row["prob_model"], f"L{row['layer']}"]
+    return _safe_name("__".join(str(p) for p in parts))
+
+
+def _parity_js(key: str, y_true: np.ndarray, y_pred: np.ndarray) -> str:
+    # 4 significant figures: well below a pixel on any panel, and it halves the
+    # file size against full float repr.
+    def numbers(a: np.ndarray) -> str:
+        return ",".join(f"{v:.4g}" for v in a.tolist())
+
+    return (f"window.{PARITY_CALLBACK}({json.dumps(key)},"
+            f'{{"t":[{numbers(y_true)}],"p":[{numbers(y_pred)}]}});\n')
+
+
+def write_parity_sidecars(runs: pd.DataFrame, out_dir: str | Path,
+                          source_key: str) -> pd.Series:
+    """Write <out_dir>/<run id>.js for every run with a readable predictions CSV.
+
+    Returns the run id per row (None where no sidecar exists), for the page to
+    find the file by. A sidecar at least as new as its CSV is left alone, so
+    rebuilding over an archive that never changes costs nothing. Sidecars in
+    `out_dir` that no longer belong to a run are removed.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    ids = pd.Series([None] * len(runs), index=runs.index, dtype=object)
+    if "predictions_path" not in runs.columns:
+        return ids
+
+    taken: dict[str, int] = {}
+    for idx, row in runs.iterrows():
+        raw = row["predictions_path"]
+        if raw is None or (isinstance(raw, float) and math.isnan(raw)):
+            continue
+        csv = Path(raw)
+        if not csv.is_file():
+            continue
+
+        rid = run_id(row)
+        taken[rid] = taken.get(rid, 0) + 1
+        if taken[rid] > 1:   # two CSVs decoding to the same factors
+            rid = f"{rid}-{taken[rid]}"
+
+        target = out_dir / f"{rid}.js"
+        if not (target.exists() and target.stat().st_mtime >= csv.stat().st_mtime):
+            try:
+                y_true, y_pred = load_run_predictions(csv)
+            except (OSError, ValueError, pd.errors.ParserError):
+                continue
+            keep = np.isfinite(y_true) & np.isfinite(y_pred)
+            target.write_text(_parity_js(f"{source_key}/{rid}", y_true[keep], y_pred[keep]),
+                              encoding="utf-8")
+        ids[idx] = rid
+
+    written = {f"{rid}.js" for rid in ids.dropna()}
+    for stale in out_dir.glob("*.js"):
+        if stale.name not in written:
+            stale.unlink()
+    return ids
+
+
 # ─────────────────────────────────────────────────────────────
 # Serialise
 # ─────────────────────────────────────────────────────────────
@@ -288,6 +460,9 @@ def build_payload(runs: pd.DataFrame, *, source: str | Path | None = None,
     missing = [c for c in wanted if c not in runs.columns]
     for column in missing:
         runs = runs.assign(**{column: np.nan})
+    # which parity sidecar belongs to the run; absent when none were written
+    if "parity_id" in runs.columns:
+        wanted.append("parity_id")
 
     integer_cols = {"layer", "rmsd_threshold", "n_test_samples", "n_features"}
     records = []
@@ -316,6 +491,39 @@ def build_payload(runs: pd.DataFrame, *, source: str | Path | None = None,
     return {"config": config, "runs": records}
 
 
+def build_sources_payload(sources: Sequence[Source], *,
+                          parity_dir: str | None = None) -> dict:
+    """The payload for a page that switches between sources.
+
+    The config (factors, metrics, defaults) is shared; each source carries its
+    own runs and provenance. The page opens on the live sweep when it has runs,
+    otherwise on the newest archive.
+    """
+    if not sources:
+        raise ValueError("no sources to build a page from")
+    parts = [build_payload(s.runs, source=s.path, n_dropped=s.n_dropped) for s in sources]
+
+    config = dict(parts[0]["config"])
+    for key in ("source", "nRuns", "nDropped", "missingColumns"):
+        config.pop(key, None)
+    config["parityDir"] = parity_dir or ""
+
+    entries = []
+    for src, part in zip(sources, parts):
+        c = part["config"]
+        entries.append({
+            "key": src.key,
+            "label": src.label,
+            "kind": src.kind,
+            "path": c["source"],
+            "nRuns": c["nRuns"],
+            "nDropped": c["nDropped"],
+            "runs": part["runs"],
+        })
+    default = next((e["key"] for e in entries if e["nRuns"]), entries[0]["key"])
+    return {"config": config, "sources": entries, "defaultSource": default}
+
+
 def render_html(payload: dict, template: str | Path = TEMPLATE_PATH) -> str:
     """Inject the payload into the template.
 
@@ -338,33 +546,51 @@ def build_explorer(
         out_path: str | Path = DEFAULT_OUT,
         *,
         runs: pd.DataFrame | None = None,
+        sources: Sequence[Source] | None = None,
         template: str | Path = TEMPLATE_PATH,
         root: str | Path | None = None,
+        archive_root: str | Path | None = None,
+        archives: bool = True,
+        parity: bool = True,
         **filters: Any,
     ) -> Path:
-    """Write a self-contained explorer page and return its path.
+    """Write the explorer page (plus its parity sidecars) and return its path.
 
     runs: a prepared frame (from `collect_runs`, or your own, as long as it has
-        the factor and metric columns). Omit it to index the sweep on disk.
-    **filters: forwarded to `find_probe_runs` when `runs` is not given.
+        the factor and metric columns). The page then shows that frame alone.
+    sources: prepared sources (from `collect_sources`). Takes precedence.
+    Omit both to index data/probing and, with `archives`, every snapshot under
+    `archive_root` (default data/probing_archive).
+    parity: write the per-run sidecars the Parity tab reads. Runs without a
+        `predictions_path` column simply have no parity plot.
+    **filters: forwarded to `find_probe_runs` when indexing from disk.
     """
-    source = Path(root) if root is not None else get_data_dir(prob=True)
-    if runs is None:
-        runs = collect_runs(root=source, **filters)
-    if runs.empty:
-        raise ValueError(
-            f"No probe runs found under {source} for filters {filters or '{}'}."
-        )
-
-    runs, dropped = drop_incomplete(runs)
-    if runs.empty:
-        raise ValueError(
-            f"Every run found under {source} is missing at least one factor value."
-        )
+    if sources is None:
+        if runs is not None:
+            usable, dropped = drop_incomplete(runs)
+            path = Path(root) if root is not None else get_data_dir(prob=True)
+            sources = [Source("current", "Current", "current", path, usable, len(dropped))]
+        else:
+            sources = collect_sources(root, archive_root=archive_root,
+                                      archives=archives, **filters)
+    if not any(len(s.runs) for s in sources):
+        where = ", ".join(str(s.path) for s in sources) or str(root)
+        raise ValueError(f"No probe runs found under {where} for filters {filters or '{}'}.")
 
     out_path = Path(out_path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = build_payload(runs, source=source, n_dropped=len(dropped))
+
+    parity_dir = None
+    if parity:
+        parity_dir = f"{out_path.stem}{PARITY_SUFFIX}"
+        sources = [
+            s if s.runs.empty else replace(s, runs=s.runs.assign(
+                parity_id=write_parity_sidecars(s.runs, out_path.parent / parity_dir / s.key,
+                                                s.key)))
+            for s in sources
+        ]
+
+    payload = build_sources_payload(sources, parity_dir=parity_dir)
     out_path.write_text(render_html(payload, template), encoding="utf-8")
     return out_path
 
@@ -389,6 +615,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help=f"output HTML path (default: <data>/probing/{DEFAULT_OUT})")
     p.add_argument("--root", default=None, type=Path,
                    help="probing data directory to index (default: data/probing)")
+    p.add_argument("--archive-root", default=None, type=Path,
+                   help=f"folder of archive snapshots (default: data/{ARCHIVE_DIRNAME})")
+    p.add_argument("--no-archives", action="store_true",
+                   help="index only --root, not the archive snapshots")
+    p.add_argument("--no-parity", action="store_true",
+                   help="skip the per-run parity sidecars (the Parity tab stays empty)")
     p.add_argument("--open", dest="open_after", action="store_true",
                    help="open the page in a browser when it is written")
 
@@ -418,21 +650,27 @@ def main(argv: Iterable[str] | None = None) -> int:
     }
     filters = {k: v for k, v in filters.items() if v is not None}
 
-    runs = collect_runs(root=root, **filters)
-    if runs.empty:
-        print(f"No probe runs found under {root} for {filters or 'the whole sweep'}.")
+    sources = collect_sources(root, archive_root=args.archive_root,
+                              archives=not args.no_archives, **filters)
+    for s in sources:
+        print(f"  {s.label:<21} {len(s.runs):>5} runs  {s.path}")
+        if s.n_dropped:
+            print(f"  [warn] {s.n_dropped} run(s) in {s.label} set aside -- missing a factor "
+                  "value. These predate the current output layout.")
+    if not any(len(s.runs) for s in sources):
+        print(f"No probe runs found for {filters or 'the whole sweep'}.")
         return 1
 
-    usable, dropped = drop_incomplete(runs)
-    if len(dropped):
-        keys = [f.key for f in FACTORS]
-        print(f"[warn] {len(dropped)} run(s) set aside -- missing a factor value "
-              f"({', '.join(sorted(dropped[keys].columns[dropped[keys].isna().any()]))}). "
-              "These predate the current output layout; re-run them to include them.")
-
-    path = build_explorer(out, runs=runs, root=root)
+    if not args.no_parity:
+        print("  writing parity sidecars (only runs whose CSV changed are rewritten) ...")
+    path = build_explorer(out, sources=sources, parity=not args.no_parity)
     size_kb = path.stat().st_size / 1024
-    print(f"[ok] {len(usable)} runs -> {path}  ({size_kb:.0f} KB)")
+    total = sum(len(s.runs) for s in sources)
+    print(f"[ok] {total} runs in {len(sources)} source(s) -> {path}  ({size_kb:.0f} KB)")
+    if not args.no_parity:
+        side = path.parent / f"{path.stem}{PARITY_SUFFIX}"
+        side_mb = sum(f.stat().st_size for f in side.rglob("*.js")) / 1e6
+        print(f"     parity sidecars: {side}  ({side_mb:.0f} MB) -- keep it next to the page")
     print(f"     open it with:  open {path}")
     if args.open_after:
         webbrowser.open(path.resolve().as_uri())

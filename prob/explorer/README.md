@@ -3,8 +3,9 @@
 An interactive page for comparing probe runs across every factor of the sweep —
 target, GNN, layer, probe model, RMSD threshold and split type.
 
-Output is **one self-contained HTML file**. 
-The runs move inside the page as JSON. 
+Output is **one HTML file** plus a folder of parity sidecars next to it.
+The run tables move inside the page as JSON; the per-run predictions the Parity
+tab plots live in the folder (see below).
 
 
 ## Building it
@@ -13,8 +14,41 @@ The runs move inside the page as JSON.
 uv run python -m prob.explorer --open
 ```
 
-Writes `data/probing/probe_explorer.html` by default. Rebuild it whenever new
-runs land — it re-indexes the sweep from disk each time.
+Writes `data/probing/probe_explorer.html` and
+`data/probing/probe_explorer_parity/` by default. Rebuild it whenever new runs
+land, or after archiving — it re-indexes everything from disk each time.
+
+The build indexes the live sweep (`data/probing`) **and every archive snapshot**
+under `data/probing_archive/<timestamp>/` (what
+`prob/cluster/archive_probe_results.sh` writes). It prints how many runs each
+source has:
+
+```
+  Current                   0 runs  .../data/probing
+  2026-09-29 16:05:07    1994 runs  .../data/probing_archive/20260929_160507
+```
+
+| Flag | Effect |
+|---|---|
+| `--no-archives` | Index only `--root`, not the snapshots. |
+| `--archive-root DIR` | Look for snapshots somewhere other than `data/probing_archive`. |
+| `--no-parity` | Skip the sidecars. The page gets smaller and the Parity tab says why it is empty. |
+
+### Parity sidecars
+
+A parity plot needs every prediction of a run (4–5k points). Across one archive
+that is ~230 MB of CSV, far too much to put inside the HTML. So the build writes
+each run's `y_true`/`y_pred` to its own small script,
+`probe_explorer_parity/<source>/<run id>.js`, and the page loads a run's script
+only when that run is plotted. A script element loads from `file://`, while
+`fetch()` does not, so the page still needs no server.
+
+- **Size:** about 40 KB per run, ~80 MB per archive (4 significant figures).
+- **Caching:** a sidecar is rewritten only when its CSV is newer. A rebuild over
+  unchanged archives takes seconds, and sidecars for runs that no longer exist
+  are removed.
+- **Moving the page:** move the folder with it. Opened without the folder, the
+  page works as before and each parity panel says `sidecar missing`.
 
 Narrow it to one slice of the sweep (each flag takes several values):
 
@@ -39,6 +73,22 @@ runs = collect_runs(gnn_model_type="CGNN-3D")
 build_explorer("cgnn3d.html", runs=runs[runs.layer > 0])
 ```
 
+## Switching between the live sweep and an archive
+
+The **Data** control at the start of the filter bar has two buttons:
+
+- **Current**: the runs under `data/probing` at build time. Greyed out when there
+  were none, as right after an archive run.
+- **Archive**: shows a second dropdown listing every snapshot, newest first,
+  e.g. `2026-09-29 16:05:07 · 1994 runs`.
+
+The page opens on Current when it has runs, otherwise on the newest archive.
+Switching keeps your filters wherever the level exists in both sources. Exported
+PNG names from an archive end in `archive-<timestamp>`, so a figure never loses
+track of which snapshot it came from. The footer names the directory in view.
+
+The Data control appears only when there is more than one source.
+
 ## What the views are for
 
 | View | Question it answers |
@@ -46,7 +96,35 @@ build_explorer("cgnn3d.html", runs=runs[runs.layer > 0])
 | **Depth curves** | Does the property get *built up* through the layers, or was it already in the input features? The main probing figure. Lays out as a panel grid — see below. |
 | **Coverage matrix** | How does every condition compare on one metric, and which combinations never ran? Blank cells are shown explicitly. |
 | **Ranked intervals** | Which runs are actually distinguishable? Dot + 95% bootstrap CI + the paired shuffled-ident baseline tick. |
+| **Parity** | What does a probe actually predict? Predicted vs true, one run per panel — the same figure as `plot_parity`. See below. |
 | **Table** | The underlying numbers, sortable, with copy-to-CSV. |
+
+## Parity plots
+
+One panel per run, laid out by **Panel rows per** / **Panel columns per** (any
+factor; set one for a wrapped strip, both for a grid).
+
+- **One run per panel, always.** Overlaying or averaging runs makes no sense
+  here, so any factor that is off both panel axes and has several levels in view
+  gets a CHOOSE banner: put it on an axis, or keep one level. Nothing is drawn
+  until each panel holds exactly one run.
+- **Draw as:** *Dots, coloured by density* (default) or *Plain dots* (hollow
+  circles). In the default, each dot's colour is a smoothed count of the points
+  around it, and the densest dots are drawn on top. Where 4,000 points overlap,
+  the dense core stays readable and every point is still drawn.
+- **Axis range:** *Shared within a target* (default) gives every panel of a
+  target the same square range, so layers and models compare by eye. *Per panel*
+  zooms each panel to its own data.
+- **Lines:** dashed red is y = x; dotted is mean(y_true), where a probe that
+  only predicts the mean sits (R² = 0).
+- **Numbers in the corner:** R² and MAE are copied from the run's
+  `summary.json`, so they match every other view. `r` (Pearson) and `σ̂/σ` are
+  computed from the plotted points. `σ̂/σ` is the spread of the predictions
+  divided by the spread of the truth; well below 1 means the probe shrinks
+  toward the mean.
+- The tab draws at most 36 panels at once, because each loads several thousand
+  points.
+- Save PNG works as on the other tabs.
 
 ## Laying out the depth curves
 
@@ -126,7 +204,11 @@ banner text — it never signals by colour alone.
 
 Each chart card has **theme · scale · Save PNG** in its header.
 
-- **Theme** defaults to **Light**, independent of the theme you are browsing in —
+- **Page theme** (top right: Auto / Light / Dark) sets how the page itself looks.
+  Auto follows your OS/browser setting. The choice is remembered in this
+  browser.
+- **PNG theme** (on each card) affects only the exported file. It defaults to
+  **Light**, independent of the theme you are browsing in —
   so a light figure for the thesis comes out of a dark page without switching
   anything. `As shown` exports what is on screen. Changing the theme redraws the
   chart, exports, then puts your view back.
@@ -150,10 +232,10 @@ inside a rasterized SVG, so IBM Plex would silently fall back anyway.
 
 ## Reading the numbers honestly
 
-- **One run is one point estimate.** There are no per-fold predictions on disk
-  (fold is collapsed at aggregation), so a box plot here would have nothing to
-  spread. The interval on each mark is the bootstrap CI the pipeline already
-  wrote to `reports/<probe>_summary.json` — that is the real uncertainty.
+- **One run is one point estimate.** The metrics are pooled over one run's
+  test predictions, so a box plot here would have nothing to spread. The
+  interval on each mark is the bootstrap CI the pipeline already wrote to
+  `reports/<probe>_summary.json` — that is the real uncertainty.
 - **R² is the only cross-target metric.** RMSE and MAE carry each target's own
   units. Select one of them across several targets and the page says so.
 - **Nothing is averaged behind your back.** See below.
