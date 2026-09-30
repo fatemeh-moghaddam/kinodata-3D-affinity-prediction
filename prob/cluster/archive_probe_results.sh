@@ -11,7 +11,9 @@
 #   DRY_RUN=0 bash prob/cluster/archive_probe_results.sh
 set -euo pipefail
 
-PROJ="${HOME_PROJ_DIR:-$HOME/kinodata-3D-affinity-prediction}"
+# PROJ="${HOME_PROJ_DIR:-$HOME/kinodata-3D-affinity-prediction}"
+# for running on local
+PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SRC="$PROJ/data/probing"
 DEST="$PROJ/data/probing_archive/$(date +%Y%m%d_%H%M%S)"
 DRY_RUN="${DRY_RUN:-1}"
