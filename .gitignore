@@ -30,12 +30,12 @@ prob/cluster/*.err
 
 
 # Managing files between local and cluster
-prob/local/copy_probing_results.sh
-prob/local/copy_reprs.sh
+prob/_local/copy_probing_results.sh
+prob/_local/copy_reprs.sh
 
 # local runs
-prob/local/run_prob_local.sh
-Claude outputs/
+prob/_local/run_prob_local.sh
+Claude outputs/g
 
 # local config files
 *_local.yaml
