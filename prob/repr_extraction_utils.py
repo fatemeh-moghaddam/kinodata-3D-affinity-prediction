@@ -2,7 +2,7 @@
 Build and run probing pipeline: dataset subset, GNN model, and per-fold representation extraction.
 
 Public API:
-  - build_kd_ds(split_path, filter_rmsd_max_value, include_val) -> KinodataDocked
+  - build_kd_ds(split_path, filter_rmsd_max_value, include_val, num_processes) -> KinodataDocked
   - build_gnn_model(config) -> RegressionModel
   - run_fold(ds, gnn_model, config) -> None
 
@@ -13,6 +13,8 @@ Run contract (what `config` must provide for run_fold):
   - graph_level: bool (must be True; node-level not implemented)
   - device: str (e.g. "cpu", "cuda")
   - dtype_out: str | None (optional, e.g. "float32", "float16")
+  - infer_batch_size, eval_num_workers, num_processes (optional; see
+    prob_config.ExtractionComputeSettings for their meaning and defaults)
 """
 from __future__ import annotations
 
@@ -37,6 +39,7 @@ from kinodata.transform import FilterDockingRMSD, TransformToComplexGraph
 from tqdm import tqdm
 
 from prob.paths_and_io import save_out_tensor
+from prob.prob_config import ExtractionComputeSettings
 from prob.resloves_and_transforms import dtype_resolve, load_model_from_checkpoint
 
 logger = logging.getLogger(__name__)
@@ -46,7 +49,6 @@ logger = logging.getLogger(__name__)
 # ─────────────────────────────────────────────────────────────
 
 _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1]))
-CPU_COUNT = int(os.environ.get("CPU_COUNT", "16"))
 
 GNN_MAKERS = {
     "DTI": make_dti_baseline,
@@ -103,6 +105,7 @@ def build_kd_ds(
     split_path: Union[str, Path, None] = None,
     filter_rmsd_max_value: float | None = None,
     include_val: bool = False,
+    num_processes: int = ExtractionComputeSettings.num_processes,
 ) -> KinodataDocked:
     """
     Build the evaluation subset of KinodataDocked for one CV fold.
@@ -130,7 +133,7 @@ def build_kd_ds(
     transform = TransformToComplexGraph(remove_heterogeneous_representation=False)
     base_ds = KinodataDocked(
         use_multiprocessing=True,
-        num_processes=CPU_COUNT,
+        num_processes=num_processes,
     )
     if filter_rmsd_max_value is None:
         base_ds.transform = transform
@@ -203,7 +206,7 @@ def _build_eval_loader(ds: KinodataDocked, config: Config, device: torch.device)
     16 GB card. Override via `infer_batch_size` only if you have headroom to spare;
     batch size does not affect outputs (eval mode, per-graph pooling via `batch_index`).
 
-    Worker count is deliberately small rather than `CPU_COUNT`. Each worker forks the
+    Worker count is deliberately small rather than `num_processes`. Each worker forks the
     in-memory dataset, and the prefetch buffer holds `num_workers * prefetch_factor *
     batch_size` graphs, so a high count costs RAM and oversubscribes the CPUs the job
     actually requested. A handful of workers is enough to stop the main process from
@@ -211,7 +214,12 @@ def _build_eval_loader(ds: KinodataDocked, config: Config, device: torch.device)
     """
     batch_size = int(config.get("infer_batch_size", 0) or config.batch_size)
     on_gpu = device.type == "cuda"
-    num_workers = min(int(config.get("eval_num_workers", 4) or 0), max(CPU_COUNT - 1, 0)) if on_gpu else 0
+    compute = ExtractionComputeSettings
+    num_processes = int(config.get("num_processes", compute.num_processes))
+    num_workers = (
+        min(int(config.get("eval_num_workers", compute.eval_num_workers) or 0), max(num_processes - 1, 0))
+        if on_gpu else 0
+    )
 
     logger.info(
         "Eval loader: batch_size=%s num_workers=%s device=%s", batch_size, num_workers, device

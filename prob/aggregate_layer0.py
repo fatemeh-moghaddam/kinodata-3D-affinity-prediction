@@ -8,8 +8,9 @@ concatenation step was skipped: `run_extraction.py` aggregated `layer_1..N` and 
 `layer_0.pt` unwritten.
 
 This script does that concatenation and nothing else. It does not load the dataset,
-build a model, or need a GPU -- unlike `extract_layer0.py`, which recomputes the
-representations from scratch and is unnecessary when the fold files are on disk.
+build a model, or need a GPU. (The removed `extract_layer0.py` recomputed layer 0
+from scratch; every current run already has its fold files, and run_extraction.py
+aggregates layer 0 itself.)
 
     python prob/aggregate_layer0.py              # every run under data/probing
     python prob/aggregate_layer0.py --output_dir data/probing/CGNN/rmsd_cutoff_2/random-k-fold

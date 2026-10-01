@@ -16,6 +16,10 @@ Section 2 is what to state in the thesis. Sections 3–5 are the edits.
 
 ### 1.1 Extraction uses test molecules only, but the pipeline assumes test + val  ⚠️
 
+✅ **Decided 2026-10-01: test molecules only.** Fixed as `ExtractionDataSettings.INCLUDE_VAL = False`
+in `prob/prob_config.py`; the data checks and docstrings now expect it. The current data already
+matches, so nothing needs re-extracting. Split types and cutoffs are compared unpaired.
+
 | Place | What it says |
 |---|---|
 | `cluster/generate_prob_dataset.sh` | passes `--include_val 0` |
@@ -163,7 +167,7 @@ Each edit is small and local, and none changes results except item 1.
 3. ✅ **Done 2026-10-01 as `ProbingExperimentSpec` in `prob/prob_config.py`.** **Use one probe settings object.** A frozen dataclass in `prob_config.py` holds every knob with its single default and is filled from the CLI. Environment variables stay as aliases read in one function with one precedence, CLI > env > default, and it fails on unknown `PROB_*` variables. It replaces `_flag`, removes the dead `PROB_BASELINE_TAG` path, and lets notebooks and scripts share defaults. The cluster and local scripts keep working unchanged.
 4. **Freeze the probe split.** Apply 1.2: fail when the file is missing and check its hash against a constant.
 5. **Guard parameter reuse.** Apply 1.3 using the extraction-manifest hash.
-6. **Add three cheap assertions.** Require exactly one `.ckpt` per model folder; today `get_model_ckpt` takes whichever the glob returns first, and every local folder has one. Require the checkpoint `config.json` to agree with the requested split, fold, cutoff and k. Pass `GIT_COMMIT` into cluster jobs.
+6. ✅ **Done 2026-10-01, except passing `GIT_COMMIT` (the commit is now read from the .git files instead).** **Add three cheap assertions.** Require exactly one `.ckpt` per model folder; today `get_model_ckpt` takes whichever the glob returns first, and every local folder has one. Require the checkpoint `config.json` to agree with the requested split, fold, cutoff and k. Pass `GIT_COMMIT` into cluster jobs.
 7. **Use one project-root rule.**
 8. **Document targets outside notebooks.** Write a `targets/README.md`, or a sidecar JSON per target, that gives each target's definition, source notebook and date. Moving the code into a script is optional.
 

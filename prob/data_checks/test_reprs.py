@@ -11,8 +11,12 @@ copying representations, before probing.
 Per condition (<gnn>/rmsd_cutoff_<x>/<split>/): the manifest, ids.pt, every
 layer_*.pt, and (marker `folds`) that the aggregated files equal their per-fold
 files concatenated in fold order, which per-checkpoint probing relies on.
-Across conditions: every model and split type holds the same idents at a cutoff,
-and the cutoffs nest.
+Across conditions: every model holds the same idents for a split type and cutoff.
+
+Extraction runs each fold's checkpoint on that fold's test molecules only
+(prob_config.ExtractionDataSettings.INCLUDE_VAL). So a condition holds the folds'
+test sets -- about half its cutoff -- and different split types, or different
+cutoffs, hold different molecules. Nothing here expects them to match.
 """
 from __future__ import annotations
 
@@ -27,13 +31,16 @@ import pandas as pd
 import pytest
 import torch
 
+from prob.prob_config import ExtractionDataSettings
+
 ROOT = Path(__file__).resolve().parents[2]
 PROBING = ROOT / "data" / "probing"
 PROCESSED = ROOT / "data" / "processed"
 CATALOGUE = ROOT / "data" / "ident_to_activity_id.csv"
 RMSD2_MAPPING = ROOT / "data" / "ident_activity_id_index_mapping.csv"
-#: Size of each cutoff's filtered dataset, used when its split CSV is not on disk.
-KNOWN_ROWS = {2: 41238, 4: 58300, 6: 93406}
+#: Test molecules over the 5 folds of each cutoff (the same for every split type),
+#: used when the split CSVs are not on disk.
+KNOWN_TEST_ROWS = {2: 20620, 4: 29150, 6: 46705}
 #: A row whose largest |value| is this many times the median row's counts as
 #: extreme (damaged copies showed values ~15x the normal range).
 EXTREME_FACTOR = 5.0
@@ -100,12 +107,12 @@ def catalogue() -> np.ndarray:
 
 @lru_cache(maxsize=None)
 def expected_rows(split: str, rmsd: int) -> int | None:
-    """Size of the cutoff's filtered dataset: from its split CSV (named like
-    get_split_file expects, e.g. 1_5.csv or 1:5.csv), else KNOWN_ROWS."""
-    csvs = sorted((PROCESSED / f"filter_predicted_rmsd_le{rmsd:.2f}" / split).glob("1*5.csv"))
-    if csvs:
-        return sum(1 for line in csvs[0].read_bytes().split(b"\n")[1:] if line.strip())
-    return KNOWN_ROWS.get(rmsd)
+    """Test rows over the cutoff's 5 split CSVs (named like get_split_file expects,
+    e.g. 1_5.csv or 1:5.csv), else KNOWN_TEST_ROWS."""
+    csvs = sorted((PROCESSED / f"filter_predicted_rmsd_le{rmsd:.2f}" / split).glob("[0-9]*5.csv"))
+    if len(csvs) == ExtractionDataSettings.K_FOLD:
+        return int(sum((pd.read_csv(f, usecols=["split"])["split"] == "test").sum() for f in csvs))
+    return KNOWN_TEST_ROWS.get(rmsd)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -114,13 +121,15 @@ def expected_rows(split: str, rmsd: int) -> int | None:
 
 
 @by_condition
-def test_manifest_was_extracted_with_val(cond: Condition):
+def test_manifest_says_test_molecules_only(cond: Condition):
     manifest = cond.path / "manifest.json"
     assert manifest.exists(), "no manifest.json: the extraction did not finish"
     spec = json.loads(manifest.read_text()).get("spec", {})
-    assert spec.get("include_val") is True, (
-        f"include_val={spec.get('include_val')}: only the GNN folds' test molecules were "
-        "extracted (half the cutoff), so split types hold different molecules"
+    # ExtractionSpec manifests record it as a fixed value; older ones as a setting.
+    include_val = spec.get("data", {}).get("fixed", {}).get("INCLUDE_VAL", spec.get("include_val"))
+    assert include_val is ExtractionDataSettings.INCLUDE_VAL, (
+        f"include_val={include_val}, but extraction is defined as "
+        f"INCLUDE_VAL={ExtractionDataSettings.INCLUDE_VAL}: re-extract this condition"
     )
 
 
@@ -132,10 +141,10 @@ def test_ids_are_unique_and_non_negative(cond: Condition):
 
 
 @by_condition
-def test_ids_cover_the_whole_cutoff(cond: Condition):
+def test_ids_are_all_the_folds_test_molecules(cond: Condition):
     expected = expected_rows(cond.split, cond.rmsd)
     if expected is None:
-        pytest.skip(f"no split CSV and no known size for rmsd {cond.rmsd}")
+        pytest.skip(f"no split CSVs and no known size for rmsd {cond.rmsd}")
     assert len(ids_of(cond.path)) == expected
 
 
@@ -198,22 +207,17 @@ def test_layer_equals_concatenated_fold_files(cond: Condition, layer: int):
 # ─────────────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("rmsd", CUTOFFS, ids=lambda r: f"rmsd{r}")
-def test_same_idents_for_every_model_and_split(rmsd: int):
-    sets = {c.id: set(ids_of(c.path).tolist()) for c in CONDITIONS if c.rmsd == rmsd}
+GROUPS = sorted({(c.rmsd, c.split) for c in CONDITIONS})
+
+
+@pytest.mark.parametrize("rmsd,split", GROUPS, ids=[f"rmsd{r}-{s.removesuffix('-k-fold')}" for r, s in GROUPS])
+def test_same_idents_for_every_model(rmsd: int, split: str):
+    """Models of one split type and cutoff ran on the same folds' test molecules,
+    so model and layer comparisons are paired."""
+    sets = {c.id: set(ids_of(c.path).tolist()) for c in CONDITIONS if (c.rmsd, c.split) == (rmsd, split)}
     reference_id, reference = next(iter(sets.items()))
-    differ = [cid for cid, s in sets.items() if s != reference]
+    differ = [cid for cid, ids in sets.items() if ids != reference]
     assert not differ, (
         f"{differ} hold different idents than {reference_id} "
         f"(shared by all {len(sets)}: {len(set.intersection(*sets.values()))})"
     )
-
-
-@pytest.mark.parametrize(
-    "lower,higher", list(combinations(CUTOFFS, 2)), ids=lambda r: f"rmsd{r}"
-)
-def test_cutoffs_nest(lower: int, higher: int):
-    lower_ids = set().union(*(ids_of(c.path).tolist() for c in CONDITIONS if c.rmsd == lower))
-    higher_ids = set().union(*(ids_of(c.path).tolist() for c in CONDITIONS if c.rmsd == higher))
-    missing = lower_ids - higher_ids
-    assert not missing, f"{len(missing)} rmsd-{lower} idents are missing at rmsd {higher}"

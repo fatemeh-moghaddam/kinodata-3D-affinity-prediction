@@ -487,9 +487,10 @@ def run_cv_search(
     compute metrics and statistical tests, and write all artifacts.
 
     The probe train/test split looks up each row's ident (`idents`, aligned
-    row-for-row with X and y) in the saved probe split file, so every model,
-    split type, RMSD cutoff and layer is tested on the same idents. test_size
-    only matters if that file does not exist yet.
+    row-for-row with X and y) in the saved probe split file, so every condition
+    uses the same train/test assignment: models and layers of one split type and
+    cutoff are tested on the same idents. test_size only matters if that file
+    does not exist yet.
 
     Saves: tuning (cv_results, best_params) and run (predictions, summary with
     statistical_tests, figures). Returns (search, metrics, y_pred).
@@ -707,8 +708,10 @@ def run_probe_per_checkpoint(
     split by ident with the global probe split, tuned with GridSearchCV on its
     train rows (or fit as-is if param_grid is empty), and evaluated on its test
     rows. The test rows of all folds together are the same idents for every
-    model, split type and layer at a cutoff, so the pooled metrics and bootstrap
-    CIs stay paired across conditions.
+    model and layer of one split type and cutoff, so the pooled metrics and
+    bootstrap CIs stay paired across those. Split types and cutoffs hold different
+    molecules (extraction is test molecules only), so comparisons across them are
+    unpaired.
 
     Best params are saved per fold in reports/<model>_best_params.json. A rerun
     of the same experiment reuses them when they were tuned over the same

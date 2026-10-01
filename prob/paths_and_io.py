@@ -84,9 +84,14 @@ def get_model_dir(
 
 
 def get_model_ckpt(model_dir: Path) -> Path:
-    cks = list(model_dir.glob("**/*.ckpt"))
+    """The one checkpoint under model_dir. More than one is an error: which file
+    the glob returns first is arbitrary, so a second checkpoint would silently
+    decide which trained model produced the representations."""
+    cks = sorted(model_dir.glob("**/*.ckpt"))
     if not cks:
         raise FileNotFoundError(f"No .ckpt found under {model_dir}")
+    if len(cks) > 1:
+        raise RuntimeError(f"{len(cks)} checkpoints under {model_dir}, expected one: {cks}")
     return cks[0]
 
 

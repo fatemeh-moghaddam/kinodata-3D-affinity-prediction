@@ -103,10 +103,9 @@ def test_precedence_is_cli_then_config_then_env_then_default():
 def test_fixed_values_cannot_be_set_per_run():
     with pytest.raises(TypeError):
         prob_config.ProbeModelSettings(INNER_CV_FOLDS=5)
-    spec, _ = prob_config.resolve_experiment_spec(
-        CONDITION, argv=["--BOOTSTRAP_N", "10"], environ={},
-    )
-    assert spec.evaluation.BOOTSTRAP_N == prob_config.ProbeEvalSettings.BOOTSTRAP_N
+    for flag in ("--bootstrap_n", "--BOOTSTRAP_N", "--inner_cv_folds=5"):
+        with pytest.raises(ValueError, match="is fixed"):
+            prob_config.resolve_experiment_spec(CONDITION, argv=[flag, "10"], environ={})
 
 
 @pytest.mark.parametrize("env, message", [
