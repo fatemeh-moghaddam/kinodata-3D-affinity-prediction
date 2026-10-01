@@ -9,6 +9,7 @@ dependencies = [
     "biotite>=1.1.0",
     "black>=24.10.0",
     "docktgrid>=0.0.2",
+    "duckdb>=1.5.6",
     "lightning>=2.5.0.post0",
     "matplotlib>=3.10.0",
     "notebook>=7.3.2",
