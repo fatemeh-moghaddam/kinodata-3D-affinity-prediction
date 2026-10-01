@@ -9,6 +9,9 @@
 #
 # Dry run by default (only lists what would move). To actually move:
 #   DRY_RUN=0 bash prob/cluster/archive_probe_results.sh
+#
+# After a real move it refreshes the probing database (python -m prob.db ingest),
+# which adds the new snapshot and empties the "current" source. INGEST=0 skips that.
 set -euo pipefail
 
 # PROJ="${HOME_PROJ_DIR:-$HOME/kinodata-3D-affinity-prediction}"
@@ -37,4 +40,8 @@ if [ "$DRY_RUN" = 1 ]; then
 else
   echo "$n directories moved to $DEST"
   echo "best_params files left under data/probing: $(find "$SRC" -name '*_best_params.json' | wc -l)"
+  if [ "${INGEST:-1}" = 1 ]; then
+    (cd "$PROJ" && uv run python -m prob.db ingest) \
+      || echo "database ingest failed; run it by hand: uv run python -m prob.db ingest"
+  fi
 fi
