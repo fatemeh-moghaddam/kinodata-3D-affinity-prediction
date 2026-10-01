@@ -8,6 +8,7 @@ lives in prob_stats; metrics in prob_metrics; CV pipeline in prob_run.
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 from datetime import datetime
@@ -28,7 +29,7 @@ from prob.paths_and_io import (
     load_y_by_ids,
 )
 from prob.prob_config import get_ds_load_config
-from prob.prob_run import load_best_params_by_fold, run_probe_per_checkpoint
+from prob.prob_run import load_best_params_by_fold, run_cv_search, run_probe_per_checkpoint
 
 # Probe registry: add entries here to run new linear or non-linear probes.
 # For metrics/stats use prob.prob_metrics and prob.prob_stats.
@@ -103,6 +104,22 @@ def _resolve_layer_nums(prob_config: cfg.Config) -> List[int]:
 # ─────────────────────────────────────────────────────────────
 
 
+def _source_best_params_file(
+    prob_config: cfg.Config, target: str, prob_model: str, layer: int
+) -> Path:
+    """Where `target`'s run of `prob_model` at `layer` saved its best params."""
+    dirs = get_exp_dirs(
+        prob_config.output_dir, target=target, prob_model=prob_model, layer_num=layer, create=False,
+    )
+    return dirs[EXP_DIR_REPORTS] / f"{prob_model}_best_params.json"
+
+
+def _log_run(run_dict: Dict[str, Any]) -> Dict[str, Any]:
+    if wandb.run is not None:
+        wandb.log(run_dict)
+    return run_dict
+
+
 def run_probes(
     prob_config: cfg.Config,
     X: np.ndarray,
@@ -116,6 +133,8 @@ def run_probes(
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
     params_from_target: Optional[str] = None,
+    per_ckpt: bool = True,
+    pooled: bool = False,
 ) -> List[Dict[str, Any]]:
     """
     For each probe entry, train one probe per GNN checkpoint (see
@@ -132,6 +151,11 @@ def run_probes(
     for that target (same probe, same layer), which must have run already. The
     shuffled-ident baseline uses it with the real target, so the control runs
     the same probe as the real task.
+
+    per_ckpt / pooled choose what runs (PROB_PER_CKPT / PROB_POOLED in main).
+    pooled also fits one probe over all folds' rows (prob_run.run_cv_search), the
+    pre-per-checkpoint setup, kept for comparison. It is written as probe
+    "<name>_pooled" next to "<name>", so the explorer shows it as its own probe.
     """
     target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
     layer = layer_num
@@ -141,57 +165,88 @@ def run_probes(
         name = entry["name"]
         estimator = entry["estimator"]
         param_grid = entry.get("param_grid")
-        exp_dirs = get_exp_dirs(
-            prob_config.output_dir,
-            target=target_name,
-            prob_model=name,
-            layer_num=layer,
-        )
-        # One line per experiment, so the .out file shows progress and the exact
-        # directory each probe's artifacts/reports/figures are written to.
-        print(f"[prob] {name} layer={layer} -> {exp_dirs['root']}", flush=True)
+        entry_n_jobs = entry.get("n_jobs") or n_jobs
 
-        fixed_params, fixed_source = None, None
-        if params_from_target is not None:
-            source_dirs = get_exp_dirs(
-                prob_config.output_dir, target=params_from_target,
-                prob_model=name, layer_num=layer, create=False,
+        if per_ckpt:
+            exp_dirs = get_exp_dirs(
+                prob_config.output_dir, target=target_name, prob_model=name, layer_num=layer,
             )
-            fixed_source = source_dirs[EXP_DIR_REPORTS] / f"{name}_best_params.json"
-            fixed_params = load_best_params_by_fold(fixed_source, param_grid)
-            if not fixed_params:
-                raise FileNotFoundError(
-                    f"No per-fold best params for {name} layer {layer} of target "
-                    f"'{params_from_target}' at {fixed_source} (tuned over the current grid); "
-                    "run the real target before its baseline"
-                )
+            # One line per experiment, so the .out file shows progress and the exact
+            # directory each probe's artifacts/reports/figures are written to.
+            print(f"[prob] {name} layer={layer} -> {exp_dirs['root']}", flush=True)
 
-        _, metrics, _ = run_probe_per_checkpoint(
-            X, y, estimator, param_grid,
-            idents=idents,
-            folds=folds,
-            n_splits=N_SPLITS_CV,
-            test_size=TEST_SIZE,
-            random_state=RANDOM_STATE,
-            n_jobs=entry.get("n_jobs") or n_jobs,
-            exp_dirs=exp_dirs,
-            model_name=name,
-            run_stats=True,
-            share_best_params_across_layers=reuse_best_params,
-            best_params_cache_dir=best_params_cache_dir,
-            fixed_best_params=fixed_params,
-            fixed_best_params_source=str(fixed_source) if fixed_source is not None else None,
-        )
-        across = metrics.pop("across_checkpoints")
-        run_dict = {
-            "experiment": f"{target_name}_{name}",
-            "layer": layer,
-            **metrics,
-            **{f"{m}_ckpt_{stat}": v for m, s in across.items() for stat, v in s.items()},
-        }
-        if wandb.run is not None:
-            wandb.log(run_dict)
-        all_runs.append(run_dict)
+            fixed_params, fixed_source = None, None
+            if params_from_target is not None:
+                fixed_source = _source_best_params_file(prob_config, params_from_target, name, layer)
+                fixed_params = load_best_params_by_fold(fixed_source, param_grid)
+                if not fixed_params:
+                    raise FileNotFoundError(
+                        f"No per-fold best params for {name} layer {layer} of target "
+                        f"'{params_from_target}' at {fixed_source} (tuned over the current grid); "
+                        "run the real target before its baseline"
+                    )
+
+            _, metrics, _ = run_probe_per_checkpoint(
+                X, y, estimator, param_grid,
+                idents=idents,
+                folds=folds,
+                n_splits=N_SPLITS_CV,
+                test_size=TEST_SIZE,
+                random_state=RANDOM_STATE,
+                n_jobs=entry_n_jobs,
+                exp_dirs=exp_dirs,
+                model_name=name,
+                run_stats=True,
+                share_best_params_across_layers=reuse_best_params,
+                best_params_cache_dir=best_params_cache_dir,
+                fixed_best_params=fixed_params,
+                fixed_best_params_source=str(fixed_source) if fixed_source is not None else None,
+            )
+            across = metrics.pop("across_checkpoints")
+            all_runs.append(_log_run({
+                "experiment": f"{target_name}_{name}",
+                "layer": layer,
+                **metrics,
+                **{f"{m}_ckpt_{stat}": v for m, st in across.items() for stat, v in st.items()},
+            }))
+
+        if pooled:
+            pooled_name = f"{name}_pooled"
+            exp_dirs = get_exp_dirs(
+                prob_config.output_dir, target=target_name, prob_model=pooled_name, layer_num=layer,
+            )
+            print(f"[prob] {pooled_name} layer={layer} -> {exp_dirs['root']}", flush=True)
+
+            fixed_params, fixed_source = None, None
+            if params_from_target is not None:
+                fixed_source = _source_best_params_file(prob_config, params_from_target, pooled_name, layer)
+                if not fixed_source.exists():
+                    raise FileNotFoundError(
+                        f"No best params for {pooled_name} layer {layer} of target "
+                        f"'{params_from_target}' at {fixed_source}; run the real target before its baseline"
+                    )
+                fixed_params = json.loads(fixed_source.read_text())
+
+            search, metrics, _ = run_cv_search(
+                X, y, estimator, param_grid or {},
+                idents=idents,
+                n_splits=N_SPLITS_CV,
+                test_size=TEST_SIZE,
+                random_state=RANDOM_STATE,
+                n_jobs=entry_n_jobs,
+                exp_dirs=exp_dirs,
+                model_name=pooled_name,
+                run_stats=True,
+                reuse_best_params=reuse_best_params,
+                best_params_cache_dir=best_params_cache_dir,
+                fixed_best_params=fixed_params,
+                fixed_best_params_source=str(fixed_source) if fixed_source is not None else None,
+            )
+            all_runs.append(_log_run({
+                "experiment": f"{target_name}_{pooled_name}",
+                "layer": layer,
+                **metrics,
+            }))
 
     return all_runs
 
@@ -208,6 +263,8 @@ def linear_models(
     best_params_cache_dir: Optional[Path] = None,
     target_name_override: Optional[str] = None,
     params_from_target: Optional[str] = None,
+    per_ckpt: bool = True,
+    pooled: bool = False,
 ) -> List[Dict[str, Any]]:
     """Run all registered linear probes. Use LINEAR_PROBES in prob_models to add more."""
     if n_jobs == -1:
@@ -225,6 +282,8 @@ def linear_models(
         best_params_cache_dir=best_params_cache_dir,
         target_name_override=target_name_override,
         params_from_target=params_from_target,
+        per_ckpt=per_ckpt,
+        pooled=pooled,
     )
 
 
@@ -309,6 +368,8 @@ def non_linear_models(
     target_name_override: Optional[str] = None,
     probe_entries: Optional[List[Dict[str, Any]]] = None,
     params_from_target: Optional[str] = None,
+    per_ckpt: bool = True,
+    pooled: bool = False,
 ) -> List[Dict[str, Any]]:
     """Run registered non-linear probes (all of NONLINEAR_PROBES, or probe_entries if given)."""
     if n_jobs == -1:
@@ -326,6 +387,8 @@ def non_linear_models(
         best_params_cache_dir=best_params_cache_dir,
         target_name_override=target_name_override,
         params_from_target=params_from_target,
+        per_ckpt=per_ckpt,
+        pooled=pooled,
     )
 
 
@@ -394,6 +457,11 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
         Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
     )
     run_shuffled_baseline = _flag("PROB_RUN_SHUFFLED_BASELINE", "run_shuffled_baseline", True)
+    # One probe per GNN checkpoint and one pooled probe over all folds; both on by default.
+    run_per_ckpt = _flag("PROB_PER_CKPT", "per_ckpt", True)
+    run_pooled = _flag("PROB_POOLED", "pooled", True)
+    if not (run_per_ckpt or run_pooled):
+        raise ValueError("PROB_PER_CKPT and PROB_POOLED are both off; nothing to run")
     run_linear_models = _flag("PROB_RUN_LINEAR_MODELS", "run_linear_models", True)
     run_non_linear_models = _flag("PROB_RUN_NON_LINEAR_MODELS", "run_non_linear_models", False)
     nonlinear_models_csv = os.getenv("PROB_NONLINEAR_MODELS", "")
@@ -437,7 +505,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
         f"[prob] probes: linear={run_linear_models} "
         f"non_linear={run_non_linear_models} "
         f"({[e['name'] for e in nonlinear_probe_entries] if run_non_linear_models else []}) "
-        f"baseline={run_shuffled_baseline} n_jobs={n_jobs}",
+        f"baseline={run_shuffled_baseline} per_ckpt={run_per_ckpt} pooled={run_pooled} n_jobs={n_jobs}",
         flush=True,
     )
 
@@ -499,6 +567,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
                     best_params_cache_dir=best_params_cache_dir,
+                    per_ckpt=run_per_ckpt,
+                    pooled=run_pooled,
                 )
             )
         if run_non_linear_models:
@@ -513,6 +583,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                     n_jobs=n_jobs,
                     reuse_best_params=reuse_best_params,
                     best_params_cache_dir=best_params_cache_dir,
+                    per_ckpt=run_per_ckpt,
+                    pooled=run_pooled,
                     probe_entries=nonlinear_probe_entries,
                 )
             )
@@ -530,6 +602,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
                         best_params_cache_dir=best_params_cache_dir,
+                        per_ckpt=run_per_ckpt,
+                        pooled=run_pooled,
                         target_name_override=baseline_target_name,
                         params_from_target=target_name,
                     )
@@ -546,6 +620,8 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
                         best_params_cache_dir=best_params_cache_dir,
+                        per_ckpt=run_per_ckpt,
+                        pooled=run_pooled,
                         probe_entries=nonlinear_probe_entries,
                         target_name_override=baseline_target_name,
                         params_from_target=target_name,

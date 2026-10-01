@@ -310,6 +310,7 @@ def run_probe(
     idents: Optional[np.ndarray] = None,
     ids_test: Optional[np.ndarray] = None,
     probe_split_info: Optional[Dict[str, str]] = None,
+    extra_summary: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[str, Any], np.ndarray, Dict[str, Dict[str, Any]]]:
     """
     Fit a single probe pipeline on train data, predict on test, compute metrics
@@ -372,6 +373,7 @@ def run_probe(
                 if run_stats else None
             ),
             probe_split_info=probe_split_info,
+            extra_summary=extra_summary,
         )
 
     return metrics, y_pred, statistical_tests
@@ -470,6 +472,8 @@ def run_cv_search(
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     probe_split_path: Optional[Path] = None,
+    fixed_best_params: Optional[Dict[str, Any]] = None,
+    fixed_best_params_source: Optional[str] = None,
 ) -> Tuple[Any, Dict[str, Any], np.ndarray]:
     """
     Tune hyperparameters on a train split, then run the best estimator on the
@@ -487,6 +491,12 @@ def run_cv_search(
     If reuse_best_params is True, this will skip GridSearchCV when cached
     best params exist (writing only run artifacts). This is intended for
     running many similar experiments without re-tuning.
+
+    This is the pooled probe: one probe over all CV folds' rows, although each
+    fold's representations come from a different checkpoint (see
+    run_probe_per_checkpoint). fixed_best_params skips tuning (the shuffled-ident
+    baseline passes the real target's params); fixed_best_params_source is
+    recorded in the summary.
     """
     X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
         X, y, idents, load_probe_split(probe_split_path, test_size=test_size)
@@ -506,11 +516,16 @@ def run_cv_search(
 
     search: Any
     loaded_best_params: Optional[Dict[str, Any]] = None
+    params_source = "tuned"
+    if fixed_best_params is not None:
+        loaded_best_params = _normalize_loaded_best_params(fixed_best_params)
+        params_source = "fixed"
 
     # If enabled, prefer:
     # 1) best_params written for the current exp_dirs (re-run of same experiment)
     # 2) a shared cache directory that is common across layers for the same model/target
-    if reuse_best_params and exp_dirs is not None:
+    if loaded_best_params is None and reuse_best_params and exp_dirs is not None:
+        params_source = "saved"
         current_best_params_fp = _best_params_file(exp_dirs.get(EXP_DIR_REPORTS))
         if current_best_params_fp is not None and current_best_params_fp.exists():
             with open(current_best_params_fp, "r") as f:
@@ -525,6 +540,11 @@ def run_cv_search(
             if cache_fp is not None and cache_fp.exists():
                 with open(cache_fp, "r") as f:
                     loaded_best_params = _normalize_loaded_best_params(json.load(f))
+                params_source = "shared"
+
+    summary_fields: Dict[str, Any] = {"probe_mode": "pooled", "params_source": params_source}
+    if fixed_best_params_source is not None:
+        summary_fields["best_params_from"] = fixed_best_params_source
 
     if loaded_best_params is not None:
         # Ensure per-exp best params exist too (keeps artifacts consistent).
@@ -535,7 +555,7 @@ def run_cv_search(
                 fp = reports_dir / f"{model_name}_best_params.json"
                 if not fp.exists():
                     with open(fp, "w") as f:
-                        json.dump(loaded_best_params, f, indent=2)
+                        json.dump(loaded_best_params, f, indent=2, default=_json_default)
 
         pipe = _make_pipeline(prob_model)
         pipe.set_params(**loaded_best_params)
@@ -556,6 +576,7 @@ def run_cv_search(
             y_test=y_test,
             ids_test=ids_test,
             probe_split_info=probe_split_info,
+            extra_summary=summary_fields,
         )
         search = _BestParamsOnly(loaded_best_params)
         return search, metrics, y_pred
@@ -600,6 +621,7 @@ def run_cv_search(
         y_test=y_test,
         ids_test=ids_test,
         probe_split_info=probe_split_info,
+        extra_summary={**summary_fields, "params_source": "tuned", "n_splits_cv": n_splits},
     )
 
     return search, metrics, y_pred

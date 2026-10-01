@@ -279,18 +279,27 @@ def test_run_probes_returns_one_row_per_probe_with_checkpoint_spread(world):
 def test_main_end_to_end(world, cheap_registry):
     runs = orch.main(make_config(world, run_shuffled_baseline=1))
 
-    # Summary CSV: one row per (probe, layer), the signal is in layer 1 only.
+    # Summary CSV: one row per (probe, layer) per mode (per checkpoint and pooled
+    # are both on by default); the signal is in layer 1 only.
     summary = pd.read_csv(world.out_dir / "affinity" / "experiments" / "summary_runs.csv")
-    assert list(zip(summary["experiment"], summary["layer"])) == [("affinity_ridge", 0), ("affinity_ridge", 1)]
-    r2 = dict(zip(summary["layer"], summary["r2"]))
+    assert list(zip(summary["experiment"], summary["layer"])) == [
+        ("affinity_ridge", 0), ("affinity_ridge_pooled", 0),
+        ("affinity_ridge", 1), ("affinity_ridge_pooled", 1),
+    ]
+    per_ckpt = summary[summary["experiment"] == "affinity_ridge"]
+    pooled = summary[summary["experiment"] == "affinity_ridge_pooled"]
+    r2 = dict(zip(per_ckpt["layer"], per_ckpt["r2"]))
     assert r2[1] > 0.95, "one probe per checkpoint should decode a rotated linear signal"
     assert r2[0] < 0.1, "layer 0 is noise"
+    assert pooled.loc[pooled["layer"] == 1, "r2"].item() < r2[1], (
+        "one pooled probe cannot undo a different rotation per checkpoint"
+    )
     assert {"r2_ckpt_mean", "r2_ckpt_sd", "pearson_ckpt_mean"} <= set(summary.columns)
-    assert len(runs) == 2
+    assert len(runs) == 4
 
     # The shuffled baseline has its own target dir and learns nothing.
     baseline = pd.read_csv(world.out_dir / "affinity_shuffled_ident" / "experiments" / "summary_runs.csv")
-    assert list(baseline["layer"]) == [0, 1]
+    assert sorted(baseline["layer"]) == [0, 0, 1, 1]
     assert (baseline["r2"] < 0.1).all()
 
     # Predictions: the probe test idents that have a target, sorted, each tagged
@@ -325,7 +334,26 @@ def test_main_layer_backfill_keeps_other_layers_in_summary(world, cheap_registry
     orch.main(config)
 
     summary = pd.read_csv(world.out_dir / "affinity" / "experiments" / "summary_runs.csv")
-    assert sorted(summary["layer"]) == [0, 1]
+    for experiment in ("affinity_ridge", "affinity_ridge_pooled"):
+        assert sorted(summary.loc[summary["experiment"] == experiment, "layer"]) == [0, 1]
+
+
+@pytest.mark.slow
+def test_main_pooled_switch_off_runs_only_per_checkpoint(world, cheap_registry, monkeypatch):
+    monkeypatch.setenv("PROB_POOLED", "0")
+    orch.main(make_config(world))
+
+    summary = pd.read_csv(world.out_dir / "affinity" / "experiments" / "summary_runs.csv")
+    assert set(summary["experiment"]) == {"affinity_ridge"}
+    assert not (world.out_dir / "affinity" / "ridge_pooled").exists()
+
+
+@pytest.mark.slow
+def test_main_with_both_switches_off_raises(world, cheap_registry, monkeypatch):
+    monkeypatch.setenv("PROB_POOLED", "0")
+    monkeypatch.setenv("PROB_PER_CKPT", "0")
+    with pytest.raises(ValueError, match="nothing to run"):
+        orch.main(make_config(world))
 
 
 @pytest.mark.slow
