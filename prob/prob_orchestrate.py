@@ -8,9 +8,11 @@ lives in prob_stats; metrics in prob_metrics; CV pipeline in prob_run.
 """
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -28,6 +30,7 @@ from prob.paths_and_io import (
     load_X_from_pt,
     load_y_by_ids,
 )
+from prob import prob_models, prob_run, run_manifest
 from prob.prob_config import get_ds_load_config
 from prob.prob_run import load_best_params_by_fold, run_cv_search, run_probe_per_checkpoint
 
@@ -135,6 +138,7 @@ def run_probes(
     params_from_target: Optional[str] = None,
     per_ckpt: bool = True,
     pooled: bool = False,
+    run_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """
     For each probe entry, train one probe per GNN checkpoint (see
@@ -156,7 +160,11 @@ def run_probes(
     pooled also fits one probe over all folds' rows (prob_run.run_cv_search), the
     pre-per-checkpoint setup, kept for comparison. It is written as probe
     "<name>_pooled" next to "<name>", so the explorer shows it as its own probe.
+
+    run_id (the run manifest's id, see prob.run_manifest) is written into every
+    probe summary JSON and summary row, linking each result to its manifest.
     """
+    run_fields = {"run_id": run_id} if run_id else {}
     target_name = target_name_override or Path(prob_config.get("target_file", TARGET_FILE)).stem
     layer = layer_num
     all_runs: List[Dict[str, Any]] = []
@@ -201,11 +209,13 @@ def run_probes(
                 best_params_cache_dir=best_params_cache_dir,
                 fixed_best_params=fixed_params,
                 fixed_best_params_source=str(fixed_source) if fixed_source is not None else None,
+                extra_summary=run_fields,
             )
             across = metrics.pop("across_checkpoints")
             all_runs.append(_log_run({
                 "experiment": f"{target_name}_{name}",
                 "layer": layer,
+                **run_fields,
                 **metrics,
                 **{f"{m}_ckpt_{stat}": v for m, st in across.items() for stat, v in st.items()},
             }))
@@ -241,10 +251,12 @@ def run_probes(
                 best_params_cache_dir=best_params_cache_dir,
                 fixed_best_params=fixed_params,
                 fixed_best_params_source=str(fixed_source) if fixed_source is not None else None,
+                extra_summary=run_fields,
             )
             all_runs.append(_log_run({
                 "experiment": f"{target_name}_{pooled_name}",
                 "layer": layer,
+                **run_fields,
                 **metrics,
             }))
 
@@ -265,6 +277,7 @@ def linear_models(
     params_from_target: Optional[str] = None,
     per_ckpt: bool = True,
     pooled: bool = False,
+    run_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Run all registered linear probes. Use LINEAR_PROBES in prob_models to add more."""
     if n_jobs == -1:
@@ -284,6 +297,7 @@ def linear_models(
         params_from_target=params_from_target,
         per_ckpt=per_ckpt,
         pooled=pooled,
+        run_id=run_id,
     )
 
 
@@ -370,6 +384,7 @@ def non_linear_models(
     params_from_target: Optional[str] = None,
     per_ckpt: bool = True,
     pooled: bool = False,
+    run_id: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     """Run registered non-linear probes (all of NONLINEAR_PROBES, or probe_entries if given)."""
     if n_jobs == -1:
@@ -389,6 +404,7 @@ def non_linear_models(
         params_from_target=params_from_target,
         per_ckpt=per_ckpt,
         pooled=pooled,
+        run_id=run_id,
     )
 
 
@@ -428,11 +444,71 @@ def _write_summary(runs: List[Dict[str, Any]], summary_dir: Path) -> Path:
 # ─────────────────────────────────────────────────────────────
 
 
+def _run_constants() -> Dict[str, Any]:
+    """Fixed choices that live in code rather than in any config, for the run manifest."""
+    defaults = inspect.signature(run_probe_per_checkpoint).parameters
+    return {
+        "seeds": {
+            "probe_estimators": prob_models.RANDOM_STATE,
+            "inner_cv_shuffle": RANDOM_STATE,
+            "bootstrap": RANDOM_STATE,
+            "baseline_permutation": RANDOM_STATE,
+            "probe_split_if_rebuilt": prob_run.DEFAULT_PROBE_SPLIT_SEED,
+        },
+        "inner_cv_folds": N_SPLITS_CV,
+        "refit_metric": prob_run.DEFAULT_REFIT,
+        "probe_test_size_if_split_rebuilt": TEST_SIZE,
+        "bootstrap": {
+            "n": defaults["n_bootstrap"].default,
+            "confidence": defaults["confidence"].default,
+            "resampled": "probe test rows",
+        },
+        "max_test_fraction_deviation": {
+            "pooled": prob_run.MAX_TEST_FRACTION_DEVIATION,
+            "per_checkpoint": prob_run.MAX_TEST_FRACTION_DEVIATION_PER_FOLD,
+        },
+        "feature_scaling": "StandardScaler inside the probe pipeline, fit on probe-train rows",
+    }
+
+
+def _cpu_budget_source(sub_file: Path) -> str:
+    """Which input _cpu_budget took its value from (same order as _cpu_budget)."""
+    for key in ("SLURM_CPUS_PER_TASK", "NSLOTS", "OMP_NUM_THREADS"):
+        if key in os.environ and os.environ[key].isdigit():
+            return f"env {key}"
+    if sub_file.exists() and re.search(r"request_CPUs\s*=\s*(\d+)", sub_file.read_text(), flags=re.I):
+        return f"request_CPUs in {sub_file}"
+    return "code default"
+
+
+def _extraction_spec(output_dir: Path) -> Optional[Dict[str, Any]]:
+    """The extraction manifest's spec and date, copied so the probe manifest reads alone."""
+    path = Path(output_dir) / "manifest.json"
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return {"unreadable": str(path)}
+    return {
+        "created_at": payload.get("created_at"),
+        "git_commit": payload.get("git_commit"),
+        "spec": payload.get("spec"),
+    }
+
+
 def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any]]:
     """
     Load targets and layer representations, run linear (and optionally non-linear)
     probes per layer, write per-model artifacts and a single summary CSV.
+
+    Also writes a run manifest (see prob.run_manifest) under
+    <target>/experiments/run_manifests/<run_id>.json: every resolved setting and
+    where it came from, the seeds and fixed constants, the probes and grids, and
+    the sha256 of every input file. Every summary this run writes carries run_id.
     """
+    started = time.time()
+    run_id = run_manifest.new_run_id()
     all_runs: List[Dict[str, Any]] = []
     baseline_runs: List[Dict[str, Any]] = []
     layer_nums = _resolve_layer_nums(prob_config)
@@ -443,11 +519,19 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             "Check that it is passed as a CLI argument and registered in prob_config defaults as a str."
         )
 
+    # Every run setting with its resolved value and where that value came from.
+    settings: Dict[str, Dict[str, Any]] = {}
+
     def _flag(env_key: str, cfg_key: str, default: bool) -> bool:
         raw = os.getenv(env_key)
         if raw is not None:
-            return raw.lower() in {"1", "true", "yes"}
-        return bool(int(prob_config.get(cfg_key, int(default))))
+            value, source = raw.lower() in {"1", "true", "yes"}, f"env {env_key}={raw!r}"
+        elif cfg_key in prob_config:
+            value, source = bool(int(prob_config[cfg_key])), f"config {cfg_key}"
+        else:
+            value, source = default, "code default"
+        settings[cfg_key] = {"value": value, "source": source}
+        return value
 
     # 1 = share each fold's tuned params across layers (faster, but deeper layers
     # are then probed with params tuned on the first layer). Default: tune every layer.
@@ -456,6 +540,11 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     best_params_cache_dir = (
         Path(best_params_cache_dir_env) if best_params_cache_dir_env else None
     )
+    settings["best_params_cache_dir"] = {
+        "value": best_params_cache_dir,
+        "source": "env PROB_BEST_PARAMS_CACHE_DIR" if best_params_cache_dir_env
+        else "code default (<target>/<probe>/shared_best_params; used only with reuse_best_params)",
+    }
     run_shuffled_baseline = _flag("PROB_RUN_SHUFFLED_BASELINE", "run_shuffled_baseline", True)
     # One probe per GNN checkpoint and one pooled probe over all folds; both on by default.
     run_per_ckpt = _flag("PROB_PER_CKPT", "per_ckpt", True)
@@ -466,6 +555,16 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     run_non_linear_models = _flag("PROB_RUN_NON_LINEAR_MODELS", "run_non_linear_models", False)
     nonlinear_models_csv = os.getenv("PROB_NONLINEAR_MODELS", "")
     nonlinear_probe_entries = _select_probes(NONLINEAR_PROBES, nonlinear_models_csv)
+    settings["nonlinear_models"] = {
+        "value": [e["name"] for e in nonlinear_probe_entries],
+        "source": f"env PROB_NONLINEAR_MODELS={nonlinear_models_csv!r}" if nonlinear_models_csv.strip()
+        else "code default (all registered)",
+    }
+    settings["layers"] = {
+        "value": layer_nums,
+        "source": f"env PROB_LAYERS={os.getenv('PROB_LAYERS')!r}" if os.getenv("PROB_LAYERS", "").strip()
+        else "discovered: every aggregated layer_*.pt in output_dir",
+    }
 
     # Non-linear probe estimators (TorchMLPRegressor, HybridRandomForestRegressor)
     # expose a `.device` attribute; move them onto prob_config.device. On cuda,
@@ -473,6 +572,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
     # each open their own CUDA context on the same GPU and contend for memory
     # instead of speeding anything up.
     device = str(prob_config.get("device", "cpu")) or "cpu"
+    settings["device"] = {"value": device, "source": "config device"}
     for entry in nonlinear_probe_entries:
         if hasattr(entry["estimator"], "device"):
             entry["estimator"].device = device
@@ -484,9 +584,15 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             os.getenv("PROB_BASELINE_TAG", "shuffled_ident"),
         )
     )
+    settings["baseline_tag"] = {
+        "value": baseline_tag,
+        "source": "config baseline_tag" if "baseline_tag" in prob_config
+        else ("env PROB_BASELINE_TAG" if os.getenv("PROB_BASELINE_TAG") else "code default"),
+    }
 
     sub_file = _ROOT / "prob" / "cluster" / "run_prob.sub"
     n_jobs = _cpu_budget(sub_file=sub_file)
+    settings["n_jobs"] = {"value": n_jobs, "source": _cpu_budget_source(sub_file)}
 
     # Echo the resolved run identity + paths up front, so the condor .out file
     # records which model's representations this job actually read and where it
@@ -522,7 +628,7 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             project="probing",
             name=f"{target_name_for_run}_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
             tags=[tag for tag in tags if tag],
-            config={**prob_config, "random_state": RANDOM_STATE},
+            config={**prob_config, "random_state": RANDOM_STATE, "run_id": run_id},
         )
 
     # valid_mask marks non-NaN targets; index X and y by it together (never y
@@ -552,70 +658,94 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
             return_mask=True,
         )
 
-    for layer in layer_nums:
-        X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
+    # ── Run manifest: written now (status "running") and again at the end. ──
+    output_dir = Path(prob_config.output_dir)
+    manifest_dirs = [output_dir / target_name / "experiments"]
+    if run_shuffled_baseline:
+        manifest_dirs.append(output_dir / baseline_target_name / "experiments")
+    probe_split_path = prob_run.default_probe_split_path()
+    probe_split_existed = probe_split_path.is_file()
 
-        if run_linear_models:
-            all_runs.extend(
-                linear_models(
-                    prob_config,
-                    X[valid_mask],
-                    y[valid_mask],
-                    idents[valid_mask],
-                    folds[valid_mask],
-                    layer_num=layer,
-                    n_jobs=n_jobs,
-                    reuse_best_params=reuse_best_params,
-                    best_params_cache_dir=best_params_cache_dir,
-                    per_ckpt=run_per_ckpt,
-                    pooled=run_pooled,
-                )
-            )
-        if run_non_linear_models:
-            all_runs.extend(
-                non_linear_models(
-                    prob_config,
-                    X[valid_mask],
-                    y[valid_mask],
-                    idents[valid_mask],
-                    folds[valid_mask],
-                    layer_num=layer,
-                    n_jobs=n_jobs,
-                    reuse_best_params=reuse_best_params,
-                    best_params_cache_dir=best_params_cache_dir,
-                    per_ckpt=run_per_ckpt,
-                    pooled=run_pooled,
-                    probe_entries=nonlinear_probe_entries,
-                )
-            )
+    def _input_files() -> Dict[str, Any]:
+        return {
+            "extraction_manifest": run_manifest.file_record(output_dir / "manifest.json"),
+            "ids": run_manifest.file_record(output_dir / "ids.pt"),
+            "layers": {str(n): run_manifest.file_record(output_dir / f"layer_{n}.pt") for n in layer_nums},
+            "target": run_manifest.file_record(Path(prob_config.target_dir) / target_file),
+            "probe_split": {
+                **run_manifest.file_record(probe_split_path),
+                "existed_before_run": probe_split_existed,
+            },
+        }
 
-        if run_shuffled_baseline:
+    def _rows_by_fold(mask: np.ndarray) -> Dict[str, int]:
+        return {str(int(k)): int(mask[folds == k].sum()) for k in np.unique(folds)}
+
+    manifest: Dict[str, Any] = {
+        "run_id": run_id,
+        "status": "running",
+        "started_at": run_manifest.utc_now(),
+        "host": run_manifest.run_host(),
+        "request": {
+            "gnn_model_type": prob_config.get("gnn_model_type"),
+            "filter_rmsd_max_value": prob_config.get("filter_rmsd_max_value"),
+            "split_type": prob_config.get("split_type"),
+            "target_file": target_file,
+            "output_dir": output_dir,
+            "target_dir": prob_config.target_dir,
+        },
+        "settings": settings,
+        "constants": _run_constants(),
+        "probes": {
+            "linear": [run_manifest.probe_record(e, n_jobs) for e in LINEAR_PROBES] if run_linear_models else [],
+            "non_linear": [run_manifest.probe_record(e, n_jobs) for e in nonlinear_probe_entries]
+            if run_non_linear_models else [],
+        },
+        "data": {
+            "rows_in_ids": int(len(idents)),
+            "rows_with_target": int(valid_mask.sum()),
+            "rows_dropped_no_target": int((~valid_mask).sum()),
+            "rows_with_target_by_fold": _rows_by_fold(valid_mask),
+            "baseline_rows_with_target": int(valid_mask_shuffled.sum()) if run_shuffled_baseline else None,
+        },
+        "extraction": _extraction_spec(output_dir),
+        "inputs": _input_files(),
+        "code": {"git": run_manifest.git_info(_ROOT), "versions": run_manifest.package_versions()},
+        "env": run_manifest.recorded_env(),
+        "config": dict(prob_config),
+    }
+    manifest_paths = run_manifest.write_manifest(manifest, manifest_dirs)
+    print(f"[prob] run manifest: {manifest_paths[0]}", flush=True)
+
+    try:
+        for layer in layer_nums:
+            X = load_X_from_pt(prob_config.output_dir, layer_num=layer)
+
             if run_linear_models:
-                baseline_runs.extend(
+                all_runs.extend(
                     linear_models(
                         prob_config,
-                        X[valid_mask_shuffled],
-                        y_shuffled[valid_mask_shuffled],
-                        idents[valid_mask_shuffled],
-                        folds[valid_mask_shuffled],
+                        X[valid_mask],
+                        y[valid_mask],
+                        idents[valid_mask],
+                        folds[valid_mask],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
                         best_params_cache_dir=best_params_cache_dir,
                         per_ckpt=run_per_ckpt,
                         pooled=run_pooled,
-                        target_name_override=baseline_target_name,
-                        params_from_target=target_name,
+                        run_id=run_id,
                     )
                 )
             if run_non_linear_models:
-                baseline_runs.extend(
+                all_runs.extend(
                     non_linear_models(
                         prob_config,
-                        X[valid_mask_shuffled],
-                        y_shuffled[valid_mask_shuffled],
-                        idents[valid_mask_shuffled],
-                        folds[valid_mask_shuffled],
+                        X[valid_mask],
+                        y[valid_mask],
+                        idents[valid_mask],
+                        folds[valid_mask],
                         layer_num=layer,
                         n_jobs=n_jobs,
                         reuse_best_params=reuse_best_params,
@@ -623,26 +753,94 @@ def main(prob_config: cfg.Config, use_wandb: bool = False) -> List[Dict[str, Any
                         per_ckpt=run_per_ckpt,
                         pooled=run_pooled,
                         probe_entries=nonlinear_probe_entries,
-                        target_name_override=baseline_target_name,
-                        params_from_target=target_name,
+                        run_id=run_id,
                     )
                 )
 
-    # Single summary CSV after all layers
-    summary_csv = _write_summary(
-        all_runs, Path(prob_config.output_dir) / target_name / "experiments"
+            if run_shuffled_baseline:
+                if run_linear_models:
+                    baseline_runs.extend(
+                        linear_models(
+                            prob_config,
+                            X[valid_mask_shuffled],
+                            y_shuffled[valid_mask_shuffled],
+                            idents[valid_mask_shuffled],
+                            folds[valid_mask_shuffled],
+                            layer_num=layer,
+                            n_jobs=n_jobs,
+                            reuse_best_params=reuse_best_params,
+                            best_params_cache_dir=best_params_cache_dir,
+                            per_ckpt=run_per_ckpt,
+                            pooled=run_pooled,
+                            target_name_override=baseline_target_name,
+                            params_from_target=target_name,
+                            run_id=run_id,
+                        )
+                    )
+                if run_non_linear_models:
+                    baseline_runs.extend(
+                        non_linear_models(
+                            prob_config,
+                            X[valid_mask_shuffled],
+                            y_shuffled[valid_mask_shuffled],
+                            idents[valid_mask_shuffled],
+                            folds[valid_mask_shuffled],
+                            layer_num=layer,
+                            n_jobs=n_jobs,
+                            reuse_best_params=reuse_best_params,
+                            best_params_cache_dir=best_params_cache_dir,
+                            per_ckpt=run_per_ckpt,
+                            pooled=run_pooled,
+                            probe_entries=nonlinear_probe_entries,
+                            target_name_override=baseline_target_name,
+                            params_from_target=target_name,
+                            run_id=run_id,
+                        )
+                    )
+
+        # Single summary CSV after all layers
+        summary_csv = _write_summary(
+            all_runs, Path(prob_config.output_dir) / target_name / "experiments"
+        )
+
+        written = [f"[prob] DONE {len(all_runs)} run(s) -> {summary_csv}"]
+        baseline_summary_csv = None
+
+        if baseline_runs:
+            baseline_summary_csv = _write_summary(
+                baseline_runs,
+                Path(prob_config.output_dir) / baseline_target_name / "experiments",
+            )
+            written.append(
+                f"[prob] DONE {len(baseline_runs)} baseline run(s) -> {baseline_summary_csv}"
+            )
+    except BaseException as err:
+        manifest.update(
+            status="failed",
+            finished_at=run_manifest.utc_now(),
+            duration_seconds=round(time.time() - started, 1),
+            error=f"{type(err).__name__}: {err}",
+            results={"runs_finished": len(all_runs), "baseline_runs_finished": len(baseline_runs)},
+            inputs=_input_files(),
+        )
+        run_manifest.write_manifest(manifest, manifest_dirs)
+        raise
+
+    manifest.update(
+        status="finished",
+        finished_at=run_manifest.utc_now(),
+        duration_seconds=round(time.time() - started, 1),
+        results={
+            "runs": len(all_runs),
+            "baseline_runs": len(baseline_runs),
+            "summary_csv": summary_csv,
+            "baseline_summary_csv": baseline_summary_csv,
+            "experiments": sorted({(r["experiment"], r["layer"]) for r in all_runs + baseline_runs}),
+        },
+        # Re-hashed: the probe split may have been created during the run.
+        inputs=_input_files(),
     )
-
-    written = [f"[prob] DONE {len(all_runs)} run(s) -> {summary_csv}"]
-
-    if baseline_runs:
-        baseline_summary_csv = _write_summary(
-            baseline_runs,
-            Path(prob_config.output_dir) / baseline_target_name / "experiments",
-        )
-        written.append(
-            f"[prob] DONE {len(baseline_runs)} baseline run(s) -> {baseline_summary_csv}"
-        )
+    run_manifest.write_manifest(manifest, manifest_dirs)
 
     # Per-experiment artifacts/reports/figures live one level deeper, under
     # <target>/<probe>/<layer>/ -- run_probes prints each of those as it goes.

@@ -53,6 +53,7 @@ def write_run(root: Path, target: str, probe: str, layer: int | None, *,
                                "upper": 0.8, "confidence": 0.95},
             },
             "probe_mode": "per_checkpoint",
+            "run_id": "20261001T120000Z_42",
             "n_splits_cv": 2,
             "across_checkpoints": {"r2": {"mean": 0.45, "sd": 0.05},
                                    "rmse": {"mean": 1.1, "sd": float("nan")}},
@@ -125,6 +126,7 @@ def test_runs_carry_factors_metrics_and_open_columns(tree):
     assert r.r2_ckpt_mean == 0.45 and r.r2_ckpt_lower == pytest.approx(0.40)
     assert np.isnan(r.rmse_ckpt_sd)                     # NaN in the JSON -> NULL
     assert r.probe_mode == "per_checkpoint" and r.n_test_samples == 6
+    assert r.manifest_id == "20261001T120000Z_42"     # summary run_id, not the table key
     assert json.loads(r.best_params) == {"model__alpha": 1.0}
     assert json.loads(r.summary)["model"] == "ridge"
     assert r.has_predictions and r.has_ident and r.n_predictions == 6

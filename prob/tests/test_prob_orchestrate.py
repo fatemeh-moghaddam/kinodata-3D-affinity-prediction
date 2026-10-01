@@ -236,6 +236,59 @@ def test_main_on_cuda_moves_nonlinear_estimators_and_caps_n_jobs(world, recorded
     assert [e.get("n_jobs") for e in call["entries"]] == [1, 1]
 
 
+def _manifests(world, target="affinity"):
+    return sorted((world.out_dir / target / "experiments" / "run_manifests").glob("*.json"))
+
+
+def test_main_writes_a_run_manifest_with_sources_counts_and_hashes(world, recorded_probes, monkeypatch):
+    monkeypatch.setenv("PROB_LAYERS", "1")
+    orch.main(make_config(world, run_shuffled_baseline=1))
+
+    (path,) = _manifests(world)
+    m = json.loads(path.read_text())
+    assert m["status"] == "finished" and path.stem == m["run_id"]
+    # The baseline target gets the same manifest.
+    assert [p.read_text() for p in _manifests(world, "affinity_shuffled_ident")] == [path.read_text()]
+
+    s = m["settings"]
+    assert s["run_shuffled_baseline"] == {"value": True, "source": "config run_shuffled_baseline"}
+    assert s["run_linear_models"] == {"value": True, "source": "code default"}
+    assert s["layers"] == {"value": [1], "source": "env PROB_LAYERS='1'"}
+    assert s["n_jobs"] == {"value": 1, "source": "env SLURM_CPUS_PER_TASK"}
+    assert m["probes"]["linear"][0]["name"] == "ridge" and m["probes"]["non_linear"] == []
+    assert m["constants"]["seeds"]["baseline_permutation"] == orch.RANDOM_STATE
+    assert m["constants"]["inner_cv_folds"] == orch.N_SPLITS_CV
+
+    n_valid = int(np.isfinite(world.y).sum())
+    assert m["data"]["rows_in_ids"] == len(world.idents)
+    assert m["data"]["rows_with_target"] == n_valid
+    assert m["data"]["rows_dropped_no_target"] == len(world.idents) - n_valid
+    assert sum(m["data"]["rows_with_target_by_fold"].values()) == n_valid
+
+    inputs = m["inputs"]
+    assert inputs["probe_split"]["sha256"] == probe_split_provenance(world.probe_split_path)["sha256"]
+    assert inputs["probe_split"]["existed_before_run"] is True
+    assert set(inputs["layers"]) == {"1"} and inputs["layers"]["1"]["exists"]
+    assert inputs["target"]["exists"] and inputs["ids"]["exists"]
+    assert inputs["extraction_manifest"]["exists"] is False  # the synthetic condition has none
+    assert m["request"]["target_file"] == "affinity.pt"
+
+
+def test_main_marks_the_manifest_failed_and_reraises(world, recorded_probes, monkeypatch):
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("probe exploded")
+
+    monkeypatch.setattr(orch, "run_probes", boom)
+    with pytest.raises(RuntimeError, match="probe exploded"):
+        orch.main(make_config(world))
+
+    (path,) = _manifests(world)
+    m = json.loads(path.read_text())
+    assert m["status"] == "failed"
+    assert m["error"] == "RuntimeError: probe exploded"
+    assert m["results"] == {"runs_finished": 0, "baseline_runs_finished": 0}
+
+
 def test_main_requires_a_target_file(world, recorded_probes):
     with pytest.raises(ValueError, match="target_file"):
         orch.main(make_config(world, target_file=""))
@@ -323,6 +376,17 @@ def test_main_end_to_end(world, cheap_registry):
     assert set(report["statistical_tests"]) == {"r2_ci", "rmse_ci", "mae_ci", "pearson_ci"}
     for f in ("ridge_parity.png", "ridge_residuals.png"):
         assert (exp / "figures" / f).exists()
+
+    # Every result points back to the run manifest that produced it.
+    (manifest_path,) = _manifests(world)
+    run_id = manifest_path.stem
+    assert report["run_id"] == run_id
+    pooled_report = json.loads(
+        (world.out_dir / "affinity" / "ridge_pooled" / "1" / "reports" / "ridge_pooled_summary.json").read_text()
+    )
+    assert pooled_report["run_id"] == run_id
+    assert set(summary["run_id"]) == {run_id} and set(baseline["run_id"]) == {run_id}
+    assert json.loads(manifest_path.read_text())["results"]["runs"] == 4
 
 
 @pytest.mark.slow

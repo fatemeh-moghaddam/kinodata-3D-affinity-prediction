@@ -474,6 +474,7 @@ def run_cv_search(
     probe_split_path: Optional[Path] = None,
     fixed_best_params: Optional[Dict[str, Any]] = None,
     fixed_best_params_source: Optional[str] = None,
+    extra_summary: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Dict[str, Any], np.ndarray]:
     """
     Tune hyperparameters on a train split, then run the best estimator on the
@@ -496,7 +497,8 @@ def run_cv_search(
     fold's representations come from a different checkpoint (see
     run_probe_per_checkpoint). fixed_best_params skips tuning (the shuffled-ident
     baseline passes the real target's params); fixed_best_params_source is
-    recorded in the summary.
+    recorded in the summary. extra_summary (e.g. the run_id of the run manifest)
+    is merged into the summary JSON.
     """
     X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
         X, y, idents, load_probe_split(probe_split_path, test_size=test_size)
@@ -542,7 +544,9 @@ def run_cv_search(
                     loaded_best_params = _normalize_loaded_best_params(json.load(f))
                 params_source = "shared"
 
-    summary_fields: Dict[str, Any] = {"probe_mode": "pooled", "params_source": params_source}
+    summary_fields: Dict[str, Any] = {
+        "probe_mode": "pooled", "params_source": params_source, **(extra_summary or {}),
+    }
     if fixed_best_params_source is not None:
         summary_fields["best_params_from"] = fixed_best_params_source
 
@@ -683,6 +687,7 @@ def run_probe_per_checkpoint(
     probe_split_path: Optional[Path] = None,
     fixed_best_params: Optional[Dict[int, Dict[str, Any]]] = None,
     fixed_best_params_source: Optional[str] = None,
+    extra_summary: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Any], pd.DataFrame]:
     """
     Train one probe per GNN checkpoint and evaluate them as one experiment.
@@ -709,7 +714,8 @@ def run_probe_per_checkpoint(
     the same probe as the real task and costs one fit per fold.
     fixed_best_params_source (e.g. the file they came from) is recorded in the
     summary. Each fold's params_source (fixed / saved / shared / tuned / default)
-    is recorded in per_fold.
+    is recorded in per_fold. extra_summary (e.g. the run_id of the run manifest)
+    is merged into the summary JSON.
 
     Writes: predictions CSV (ident, fold, y_true, y_pred), cv_results with a fold
     column, best params, figures, and a summary JSON whose metrics_on_unseen_data
@@ -848,6 +854,7 @@ def run_probe_per_checkpoint(
                 **({"best_params_from": fixed_best_params_source} if fixed_best_params is not None else {}),
                 "across_checkpoints": across_checkpoints,
                 "per_fold": per_fold,
+                **(extra_summary or {}),
             },
         )
 

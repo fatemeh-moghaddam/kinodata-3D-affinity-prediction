@@ -233,6 +233,9 @@ def flatten_summary(summary: dict) -> dict[str, Any]:
     for k in ("probe_mode", "best_params_from"):
         if summary.get(k) is not None:
             out[k] = str(summary[k])
+    # The summary's run_id names its run manifest; the table's own run_id is a different key.
+    if summary.get("run_id") is not None:
+        out["manifest_id"] = str(summary["run_id"])
     return out
 
 

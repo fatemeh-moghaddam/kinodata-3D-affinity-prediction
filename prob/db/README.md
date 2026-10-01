@@ -98,6 +98,7 @@ erDiagram
         DOUBLE r2_ckpt_mean "+ _ckpt_sd, per metric"
         INTEGER n_test_samples "+ n_samples, n_train_samples, n_features"
         VARCHAR probe_mode
+        VARCHAR manifest_id "run manifest that wrote it"
         JSON best_params
         JSON summary "full summary JSON"
         VARCHAR rel_dir

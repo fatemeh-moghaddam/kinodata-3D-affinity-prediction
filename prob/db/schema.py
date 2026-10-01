@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 #: Bump when a declared column changes meaning or type. Sources ingested under
 #: an older version are rebuilt on the next `ingest`, even if no file changed.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -90,6 +90,8 @@ RUNS = Table(
         *FACTOR_COLUMNS,
         Col("probe_mode", "VARCHAR", "'per_checkpoint' for runs with a folds table; NULL before"),
         Col("best_params_from", "VARCHAR", "file the params were copied from, for fixed-param runs"),
+        Col("manifest_id", "VARCHAR", "run_id of the prob_orchestrate run that wrote it: "
+                                      "<target>/experiments/run_manifests/<manifest_id>.json; NULL before"),
         Col("n_samples", "INTEGER"),
         Col("n_train_samples", "INTEGER"),
         Col("n_test_samples", "INTEGER"),
