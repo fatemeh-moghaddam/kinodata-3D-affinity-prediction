@@ -292,3 +292,117 @@ def test_payload_carries_the_parity_id_only_when_present():
     runs = make_runs(n=2).assign(parity_id=["a", None])
     records = build_payload(runs)["runs"]
     assert records[0]["parity_id"] == "a" and records[1]["parity_id"] is None
+
+
+# ─────────────────────────────────────────────────────────────
+# Two backends: the probing database and the files, with a switch
+# ─────────────────────────────────────────────────────────────
+
+import duckdb  # noqa: E402
+
+import prob.explorer.build as build_mod  # noqa: E402
+from prob.db import connect, ingest  # noqa: E402
+from prob.explorer.build import (  # noqa: E402
+    build_backends_payload,
+    build_explorer,
+    collect_backends,
+    collect_runs,
+    collect_sources,
+)
+from prob.tests.test_db import write_run  # noqa: E402
+
+
+@pytest.fixture
+def ingested(tmp_path):
+    """A small sweep on disk (a real run, its baseline, a second layer) plus its database."""
+    live = tmp_path / "probing"
+    write_run(live, "affinity", "ridge", 0)
+    write_run(live, "affinity", "ridge", 1)
+    write_run(live, "affinity_shuffled_ident", "ridge", 0)
+    ingest(root=live, archives=False, db_dir=tmp_path / "probing_db", log=None)
+    return tmp_path
+
+
+def test_backends_payload_carries_both_copies_and_opens_on_the_database(tmp_path):
+    db = Source("current", "Current", "current", tmp_path, make_runs(), backend="database")
+    files = Source("current", "Current", "current", tmp_path, make_runs(n=3))
+    payload = build_backends_payload({"database": [db], "files": [files]},
+                                     details={"database": "Read from data/probing_db"})
+
+    assert payload["defaultBackend"] == "database"
+    assert [b["key"] for b in payload["backends"]] == ["database", "files"]
+    assert [b["nRuns"] for b in payload["backends"]] == [4, 3]
+    assert payload["backends"][0]["detail"] == "Read from data/probing_db"
+    assert "sources" not in payload
+    assert '"backends"' in render_html(payload)
+
+
+def test_backends_payload_falls_back_to_files_and_drops_the_switch_for_one_copy(tmp_path):
+    empty_db = Source("current", "Current", "current", tmp_path, pd.DataFrame(), backend="database")
+    files = Source("current", "Current", "current", tmp_path, make_runs())
+    assert build_backends_payload({"database": [empty_db], "files": [files]})["defaultBackend"] == "files"
+
+    single = build_backends_payload({"files": [files]})
+    assert "backends" not in single and single["config"]["backend"] == "files"
+
+
+def test_database_and_files_give_the_same_numbers(ingested):
+    from_files = collect_runs(root=ingested / "probing")
+    from_db = collect_runs(backend="database", con=connect(ingested / "probing_db"))
+    cols = ["layer", "r2", "r2_ci_lower", "r2_baseline", "r2_delta", "n_test_samples"]
+    pd.testing.assert_frame_equal(
+        from_files.sort_values("layer")[cols].reset_index(drop=True).astype(float),
+        from_db.sort_values("layer")[cols].reset_index(drop=True).astype(float))
+
+
+def test_database_sources_come_from_the_database(ingested):
+    [src] = collect_sources(backend="database", db_dir=ingested / "probing_db")
+    assert (src.key, src.kind, src.backend) == ("current", "current", "database")
+    assert len(src.runs) == 2 and src.path == (ingested / "probing").resolve()
+
+
+def test_parity_sidecars_from_the_database_match_the_csv_ones(ingested):
+    con = connect(ingested / "probing_db")
+    db_runs = collect_runs(backend="database", con=con)
+    file_runs = collect_runs(root=ingested / "probing")
+
+    a, b = ingested / "a", ingested / "b"
+    ids_db = write_parity_sidecars(db_runs, a, "current", db_source="current", con=con)
+    ids_files = write_parity_sidecars(file_runs, b, "current")
+    assert sorted(ids_db) == sorted(ids_files)
+    for rid in ids_db:
+        assert (a / f"{rid}.js").read_text() == (b / f"{rid}.js").read_text()
+
+
+def test_unreadable_database_leaves_the_files(ingested, monkeypatch):
+    def broken(**_kwargs):
+        raise duckdb.IOException("disk on fire")
+    monkeypatch.setattr(build_mod, "db_ingest", broken)
+    monkeypatch.setattr(build_mod, "get_data_dir", lambda prob=True: ingested / "probing")
+    messages = []
+    groups = collect_backends(archives=False, db_dir=ingested / "probing_db", log=messages.append)
+    assert list(groups) == ["files"] and len(groups["files"][0].runs) == 2
+    assert any("database unavailable" in m for m in messages)
+
+
+def test_custom_root_skips_the_database(ingested):
+    messages = []
+    groups = collect_backends(ingested / "probing", archives=False, log=messages.append)
+    assert list(groups) == ["files"]
+    assert any("database skipped" in m for m in messages)
+
+
+def test_built_page_with_both_backends_shares_one_sidecar_set(ingested):
+    groups = {"database": collect_sources(backend="database", db_dir=ingested / "probing_db",
+                                          archives=False),
+              "files": collect_sources(ingested / "probing", archives=False)}
+    out = build_explorer(ingested / "page.html", groups=groups, db_dir=ingested / "probing_db")
+    payload = json.loads(re.search(r'<script id="runs-data" type="application/json">(.*?)</script>',
+                                   out.read_text(), re.S).group(1))
+    assert [b["key"] for b in payload["backends"]] == ["database", "files"]
+    db_ids = {r["parity_id"] for r in payload["backends"][0]["sources"][0]["runs"]}
+    file_ids = {r["parity_id"] for r in payload["backends"][1]["sources"][0]["runs"]}
+    assert db_ids == file_ids
+    assert {p.stem for p in (ingested / "page_parity" / "current").glob("*.js")} == db_ids
+    assert "last ingested" in payload["backends"][0]["detail"]
+    connect(ingested / "probing_db")   # the build left the database readable

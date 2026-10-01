@@ -477,16 +477,33 @@ var CONFIG = PAYLOAD.config;
 // One run table per source: the live sweep (data/probing) and each archive
 // snapshot (data/probing_archive/<timestamp>). A payload from build_payload
 // alone has a single run list; wrap it so the page only deals in sources.
-var SOURCES = PAYLOAD.sources || [{
+var LEGACY_SOURCES = PAYLOAD.sources || [{
   key: "current", label: "Current", kind: "current", path: CONFIG.source || "",
   nRuns: CONFIG.nRuns, nDropped: CONFIG.nDropped || 0, runs: PAYLOAD.runs || []
 }];
-var SOURCE_BY_KEY = {};
-SOURCES.forEach(function (s) { SOURCE_BY_KEY[s.key] = s; });
-var ARCHIVES = SOURCES.filter(function (s) { return s.kind === "archive"; });
 
-// Reassigned by switchSource; everything below reads these two, never PAYLOAD.
-var SOURCE = SOURCE_BY_KEY[PAYLOAD.defaultSource] || SOURCES[0];
+// The sources can come twice: read from the probing database and read straight
+// from the run files. "Read from" switches between the two copies, so the files
+// are always there as a fallback. A single-copy payload is one backend.
+var BACKENDS = PAYLOAD.backends || [{
+  key: CONFIG.backend || "files", label: CONFIG.backend === "database" ? "Database" : "Files",
+  detail: "", sources: LEGACY_SOURCES, defaultSource: PAYLOAD.defaultSource
+}];
+var BACKEND_BY_KEY = {};
+BACKENDS.forEach(function (b) { BACKEND_BY_KEY[b.key] = b; });
+
+// Reassigned by useBackend / switchSource; everything below reads these, never PAYLOAD.
+var BACKEND, SOURCES, SOURCE_BY_KEY, ARCHIVES;
+function useBackend(b) {
+  BACKEND = b;
+  SOURCES = b.sources;
+  SOURCE_BY_KEY = {};
+  SOURCES.forEach(function (s) { SOURCE_BY_KEY[s.key] = s; });
+  ARCHIVES = SOURCES.filter(function (s) { return s.kind === "archive"; });
+}
+useBackend(BACKEND_BY_KEY[PAYLOAD.defaultBackend] || BACKENDS[0]);
+
+var SOURCE = SOURCE_BY_KEY[BACKEND.defaultSource] || SOURCES[0];
 var RUNS = SOURCE.runs;
 
 var FACTORS = CONFIG.factors;
@@ -601,6 +618,7 @@ function pickAnyFacet(name) {
 }
 
 var state = {
+  backend: BACKEND.key,
   source: SOURCE.key,
   lastArchive: SOURCE.kind === "archive" ? SOURCE.key : (ARCHIVES[0] ? ARCHIVES[0].key : ""),
   metric: D.metric,
@@ -652,6 +670,22 @@ initFilter();
 function switchSource(key) {
   var next = SOURCE_BY_KEY[key];
   if (!next || next === SOURCE) return;
+  adoptSource(next);
+}
+
+// Read the same source from the other copy (database <-> files). Falls back to
+// that copy's opening source when this one is not in it.
+function switchBackend(key) {
+  var b = BACKEND_BY_KEY[key];
+  if (!b || b === BACKEND) return;
+  var keep = SOURCE.key;
+  useBackend(b);
+  state.backend = b.key;
+  if (!SOURCE_BY_KEY[state.lastArchive]) state.lastArchive = ARCHIVES[0] ? ARCHIVES[0].key : "";
+  adoptSource(SOURCE_BY_KEY[keep] || SOURCE_BY_KEY[b.defaultSource] || SOURCES[0]);
+}
+
+function adoptSource(next) {
   var hadRuns = RUNS.length > 0;
   var prevFilter = state.filter, prevLevels = ALL_LEVELS;
 
@@ -1248,6 +1282,38 @@ function closeAllDD() {
 document.addEventListener("click", closeAllDD);
 document.addEventListener("keydown", function (e) { if (e.key === "Escape") closeAllDD(); });
 
+// Database | Files: which copy of the run tables the page reads. Only drawn when
+// the page was built with both.
+function makeBackendPicker() {
+  var field = document.createElement("div");
+  field.className = "field";
+  var lab = document.createElement("span");
+  lab.className = "field-label";
+  lab.textContent = "Read from";
+  var seg = document.createElement("div");
+  seg.className = "seg";
+  seg.setAttribute("role", "group");
+  seg.setAttribute("aria-label", "Read runs from");
+  BACKENDS.forEach(function (b) {
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = b.label;
+    btn.setAttribute("aria-pressed", b === BACKEND ? "true" : "false");
+    var here = null;
+    b.sources.forEach(function (s) { if (s.key === SOURCE.key) here = s; });
+    btn.title = (b.detail ? b.detail + ". " : "") +
+      (here ? here.nRuns + " runs for this source" : "This source is not in this copy");
+    if (!b.nRuns) {
+      btn.disabled = true;
+      btn.title = "No runs in this copy when the page was built";
+    }
+    btn.addEventListener("click", function () { switchBackend(b.key); });
+    seg.appendChild(btn);
+  });
+  field.appendChild(lab); field.appendChild(seg);
+  return field;
+}
+
 // Current | Archive, then which snapshot. Only drawn when there is a choice.
 function makeSourcePicker() {
   var field = document.createElement("div");
@@ -1315,6 +1381,7 @@ function renderControls() {
   var host = document.getElementById("controls");
   host.innerHTML = "";
 
+  if (BACKENDS.length > 1) host.appendChild(makeBackendPicker());
   if (SOURCES.length > 1) host.appendChild(makeSourcePicker());
 
   host.appendChild(makeSelect("Metric", state.metric,
@@ -3198,13 +3265,29 @@ function stampProvenance() {
   var host = document.getElementById("provenance");
   if (!host) return;
   var others = SOURCES.length - 1;
+  var origin = BACKEND.key === "database"
+    ? " read from the probing database, for the files under "
+    : " read from the run files under ";
+  // The two copies should agree; say so when they do not (an ingest that did
+  // not run, or files the ingest rejected -- see python -m prob.db issues).
+  var mismatch = "";
+  BACKENDS.forEach(function (b) {
+    if (b === BACKEND) return;
+    b.sources.forEach(function (s) {
+      if (s.key === SOURCE.key && s.nRuns !== SOURCE.nRuns) {
+        mismatch = " <b>" + escapeHtml(b.label) + "</b> has " + s.nRuns +
+          " runs for this source, not " + SOURCE.nRuns +
+          ": check <code>uv run python -m prob.db issues</code>.";
+      }
+    });
+  });
   host.innerHTML = "<b>This page.</b> Built by <code>prob/explorer/build.py</code>" +
     (CONFIG.generated ? " on " + escapeHtml(CONFIG.generated) : "") + ". Showing " +
-    SOURCE.nRuns + " runs indexed under <code>" + escapeHtml(SOURCE.path) + "</code>" +
+    SOURCE.nRuns + " runs" + origin + "<code>" + escapeHtml(SOURCE.path) + "</code>" +
     (others ? "; " + others + " other source(s) are one click away under <b>Data</b>" : "") +
     ". Rebuild with <code>uv run python -m prob.explorer</code>." +
     (SOURCE.nDropped ? " " + SOURCE.nDropped + " further run(s) were set aside for " +
-      "missing a factor value, so they cannot be placed on any axis." : "");
+      "missing a factor value, so they cannot be placed on any axis." : "") + mismatch;
 }
 stampProvenance();
 
@@ -3215,7 +3298,10 @@ render();
 window.probeExplorer = {
   state: state,
   config: CONFIG,
-  sources: SOURCES,
+  get sources() { return SOURCES; },
+  backends: BACKENDS,
+  get backend() { return BACKEND.key; },
+  switchBackend: switchBackend,
   get runs() { return RUNS; },
   switchSource: switchSource,
   render: render,

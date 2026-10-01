@@ -33,6 +33,9 @@ source has:
 | `--no-archives` | Index only `--root`, not the snapshots. |
 | `--archive-root DIR` | Look for snapshots somewhere other than `data/probing_archive`. |
 | `--no-parity` | Skip the sidecars. The page gets smaller and the Parity tab says why it is empty. |
+| `--read-from both\|database\|files` | Where the run tables come from (default `both`, with a switch on the page; see below). |
+| `--no-ingest` | Read the probing database as it is, without refreshing it first. |
+| `--db-dir DIR` | Use a probing database other than `data/probing_db`. |
 
 ### Parity sidecars
 
@@ -72,6 +75,28 @@ build_explorer("explorer.html", target="affinity")
 runs = collect_runs(gnn_model_type="CGNN-3D")
 build_explorer("cgnn3d.html", runs=runs[runs.layer > 0])
 ```
+
+## Database or files: the Read from switch
+
+By default the page carries every run table twice: once read from the probing
+database (`prob/db`, see [its README](../db/README.md)) and once read straight
+from the run files. **Read from** at the start of the filter bar switches
+between the two:
+
+- **Database** (the default): the build first runs `python -m prob.db ingest`,
+  which skips sources whose files have not changed, so the database is current.
+- **Files**: the run directories, read the way the explorer always did. Use it
+  if the database looks wrong. It is also used automatically when the database
+  cannot be read: the build prints `[warn] database unavailable` and the page
+  has no switch.
+
+Switching keeps the source and the filters. The two copies should hold the same
+runs. When they do not for the source in view, the footer says how many each
+has and points at `python -m prob.db issues`. Both copies share one set of
+parity sidecars, since they hold the same predictions.
+
+`--root` or `--archive-root` pointing away from `data/` turns the database copy
+off, because the database only holds the default locations.
 
 ## Switching between the live sweep and an archive
 

@@ -8,6 +8,7 @@ or from the shell:
     uv run python -m prob.explorer --open
 """
 from prob.explorer.build import (
+    BACKENDS,
     FACTORS,
     METRICS,
     EXTRA_COLUMNS,
@@ -15,9 +16,11 @@ from prob.explorer.build import (
     Factor,
     Metric,
     Source,
+    build_backends_payload,
     build_explorer,
     build_payload,
     build_sources_payload,
+    collect_backends,
     collect_runs,
     collect_sources,
     drop_incomplete,
@@ -26,9 +29,9 @@ from prob.explorer.build import (
 )
 
 __all__ = [
-    "FACTORS", "METRICS", "EXTRA_COLUMNS",
+    "BACKENDS", "FACTORS", "METRICS", "EXTRA_COLUMNS",
     "Factor", "Metric", "Column", "Source",
-    "collect_runs", "collect_sources", "drop_incomplete",
-    "build_payload", "build_sources_payload", "write_parity_sidecars",
+    "collect_runs", "collect_sources", "collect_backends", "drop_incomplete",
+    "build_payload", "build_sources_payload", "build_backends_payload", "write_parity_sidecars",
     "render_html", "build_explorer",
 ]
