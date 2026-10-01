@@ -20,9 +20,11 @@ from sklearn.linear_model import Lasso, Ridge
 from sklearn.model_selection import train_test_split
 from torch import nn
 
+from prob.prob_config import ProbeModelSettings
 
-# Shared random state for reproducibility
-RANDOM_STATE = 96
+
+# random_state of every probe estimator: a fixed value of the experiment spec.
+RANDOM_STATE = ProbeModelSettings.ESTIMATOR_SEED
 
 
 def _resolve_activation(name: str) -> type[nn.Module]:

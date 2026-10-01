@@ -12,10 +12,11 @@ when it ends ("finished", or "failed" with the error). A manifest left at
 "running" means the job died without Python seeing it (killed, out of memory).
 
 What it records:
-  - request: the condition (gnn, split, rmsd, target, device, baseline tag)
-  - settings: every run toggle, its resolved value, and where the value came
-    from (env var, config, or code default)
-  - constants: seeds, inner CV folds, test size, bootstrap settings, tolerances
+  - spec: the ProbingExperimentSpec (prob_config) level by level -- data, target,
+    model, evaluation, compute -- with every setting's value and source (cli,
+    config, env var or default) and every fixed value (seeds, inner CV, probe
+    split, bootstrap, tolerances)
+  - resolved: what the spec left open, as it was resolved (layers, n_jobs, paths)
   - probes: each probe's estimator, fixed params, grid and n_jobs
   - inputs: path + sha256 of the extraction manifest, ids.pt, every probed
     layer file, the target file and the probe split file

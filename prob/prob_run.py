@@ -32,22 +32,26 @@ from prob.paths_and_io import (
     EXP_DIR_REPORTS,
     get_data_dir,
 )
+from prob.prob_config import ProbeEvalSettings, ProbeModelSettings
 from prob.prob_metrics import evaluate_predictions, regression_scorers
 from prob.prob_plots import plot_parity, plot_residuals
 from prob.prob_stats import run_probe_statistical_tests
 
 
-# Defaults
-DEFAULT_TEST_SIZE = 0.1
-DEFAULT_N_SPLITS_CV = 5
-DEFAULT_REFIT = "r2"
-DEFAULT_PROBE_SPLIT_SEED = 0
+# Defaults: the fixed values of prob_config.ProbingExperimentSpec, under the names
+# this module has always used. Change them there, not here.
+DEFAULT_TEST_SIZE = ProbeEvalSettings.PROBE_TEST_SIZE
+DEFAULT_N_SPLITS_CV = ProbeModelSettings.INNER_CV_FOLDS
+DEFAULT_REFIT = ProbeModelSettings.REFIT_METRIC
+DEFAULT_PROBE_SPLIT_SEED = ProbeEvalSettings.PROBE_SPLIT_SEED
+DEFAULT_N_BOOTSTRAP = ProbeEvalSettings.BOOTSTRAP_N
+DEFAULT_CONFIDENCE = ProbeEvalSettings.BOOTSTRAP_CONFIDENCE
 #: split_by_ident raises if a condition's test fraction is further than this
 #: from the file's overall test fraction (absolute, e.g. 0.01 -> 9-11% for 10%).
-MAX_TEST_FRACTION_DEVIATION = 0.01
+MAX_TEST_FRACTION_DEVIATION = ProbeEvalSettings.MAX_TEST_FRACTION_DEVIATION
 #: The same check within one checkpoint's ~8k rows, where the fraction varies more
 #: (sd ~0.3 points at RMSD <= 2).
-MAX_TEST_FRACTION_DEVIATION_PER_FOLD = 0.015
+MAX_TEST_FRACTION_DEVIATION_PER_FOLD = ProbeEvalSettings.MAX_TEST_FRACTION_DEVIATION_PER_FOLD
 #: Columns: ident, probe_split ("train" / "test"). One fixed assignment for every
 #: model, split type, RMSD cutoff and layer.
 PROBE_SPLIT_FILENAME = "probe_split.csv"
@@ -301,8 +305,8 @@ def run_probe(
     exp_dirs: Optional[Dict[str, Path]] = None,
     model_name: str = "model",
     run_stats: bool = True,
-    n_bootstrap: int = 1000,
-    confidence: float = 0.95,
+    n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
+    confidence: float = DEFAULT_CONFIDENCE,
     X_train: Optional[np.ndarray] = None,
     X_test: Optional[np.ndarray] = None,
     y_train: Optional[np.ndarray] = None,
@@ -467,14 +471,15 @@ def run_cv_search(
     model_name: str = "model",
     refit: str = DEFAULT_REFIT,
     run_stats: bool = True,
-    n_bootstrap: int = 1000,
-    confidence: float = 0.95,
+    n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
+    confidence: float = DEFAULT_CONFIDENCE,
     reuse_best_params: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     probe_split_path: Optional[Path] = None,
     fixed_best_params: Optional[Dict[str, Any]] = None,
     fixed_best_params_source: Optional[str] = None,
     extra_summary: Optional[Dict[str, Any]] = None,
+    bootstrap_seed: Optional[int] = None,
 ) -> Tuple[Any, Dict[str, Any], np.ndarray]:
     """
     Tune hyperparameters on a train split, then run the best estimator on the
@@ -498,8 +503,10 @@ def run_cv_search(
     run_probe_per_checkpoint). fixed_best_params skips tuning (the shuffled-ident
     baseline passes the real target's params); fixed_best_params_source is
     recorded in the summary. extra_summary (e.g. the run_id of the run manifest)
-    is merged into the summary JSON.
+    is merged into the summary JSON. random_state seeds the inner CV;
+    bootstrap_seed (default: random_state) seeds the bootstrap CIs.
     """
+    bootstrap_seed = random_state if bootstrap_seed is None else bootstrap_seed
     X_train, X_test, y_train, y_test, _, ids_test = split_by_ident(
         X, y, idents, load_probe_split(probe_split_path, test_size=test_size)
     )
@@ -568,7 +575,7 @@ def run_cv_search(
             y_train,  # unused when split provided
             pipe,
             test_size=test_size,
-            random_state=random_state,
+            random_state=bootstrap_seed,  # run_probe only bootstraps: the split is given
             exp_dirs=exp_dirs,
             model_name=model_name,
             run_stats=run_stats,
@@ -613,7 +620,7 @@ def run_cv_search(
         X_train, y_train,  # unused when split provided
         search.best_estimator_,
         test_size=test_size,
-        random_state=random_state,
+        random_state=bootstrap_seed,  # run_probe only bootstraps: the split is given
         exp_dirs=exp_dirs,
         model_name=model_name,
         run_stats=run_stats,
@@ -680,14 +687,15 @@ def run_probe_per_checkpoint(
     model_name: str = "model",
     refit: str = DEFAULT_REFIT,
     run_stats: bool = True,
-    n_bootstrap: int = 1000,
-    confidence: float = 0.95,
+    n_bootstrap: int = DEFAULT_N_BOOTSTRAP,
+    confidence: float = DEFAULT_CONFIDENCE,
     share_best_params_across_layers: bool = False,
     best_params_cache_dir: Optional[Path] = None,
     probe_split_path: Optional[Path] = None,
     fixed_best_params: Optional[Dict[int, Dict[str, Any]]] = None,
     fixed_best_params_source: Optional[str] = None,
     extra_summary: Optional[Dict[str, Any]] = None,
+    bootstrap_seed: Optional[int] = None,
 ) -> Tuple[Dict[int, Dict[str, Any]], Dict[str, Any], pd.DataFrame]:
     """
     Train one probe per GNN checkpoint and evaluate them as one experiment.
@@ -715,7 +723,8 @@ def run_probe_per_checkpoint(
     fixed_best_params_source (e.g. the file they came from) is recorded in the
     summary. Each fold's params_source (fixed / saved / shared / tuned / default)
     is recorded in per_fold. extra_summary (e.g. the run_id of the run manifest)
-    is merged into the summary JSON.
+    is merged into the summary JSON. random_state seeds the inner CV;
+    bootstrap_seed (default: random_state) seeds the bootstrap CIs.
 
     Writes: predictions CSV (ident, fold, y_true, y_pred), cv_results with a fold
     column, best params, figures, and a summary JSON whose metrics_on_unseen_data
@@ -724,6 +733,7 @@ def run_probe_per_checkpoint(
 
     Returns (best_params_by_fold, metrics, predictions DataFrame).
     """
+    bootstrap_seed = random_state if bootstrap_seed is None else bootstrap_seed
     idents = np.asarray(idents).astype(int)
     folds = np.asarray(folds).astype(int)
     if not (len(folds) == len(idents) == len(X) == len(y)):
@@ -810,7 +820,7 @@ def run_probe_per_checkpoint(
     if run_stats:
         statistical_tests = run_probe_statistical_tests(
             y_test_all, y_pred_all,
-            confidence=confidence, n_bootstrap=n_bootstrap, random_state=random_state,
+            confidence=confidence, n_bootstrap=n_bootstrap, random_state=bootstrap_seed,
         )
 
     across_checkpoints = {
@@ -844,7 +854,7 @@ def run_probe_per_checkpoint(
             ids_test=pred_df["ident"].to_numpy(),
             folds_test=pred_df["fold"].to_numpy(),
             bootstrap_settings=(
-                {"n_bootstrap": n_bootstrap, "confidence": confidence, "random_state": random_state}
+                {"n_bootstrap": n_bootstrap, "confidence": confidence, "random_state": bootstrap_seed}
                 if run_stats else None
             ),
             probe_split_info=probe_split_info,

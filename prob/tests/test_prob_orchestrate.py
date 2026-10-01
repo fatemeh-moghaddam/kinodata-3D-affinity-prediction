@@ -17,6 +17,7 @@ from sklearn.linear_model import Ridge
 
 import kinodata.configuration as cfg
 from prob import prob_orchestrate as orch
+from prob.prob_config import ProbeEvalSettings, ProbeModelSettings, ProbeTargetSettings
 from prob.prob_models import HybridRandomForestRegressor
 from prob.prob_run import probe_split_provenance
 
@@ -76,18 +77,17 @@ def test_layers_are_discovered_numerically_and_tower_files_ignored(tmp_path):
     for name in ("layer_0", "layer_2", "layer_10", "ligand_layer_1", "pocket_layer_0", "ids"):
         (tmp_path / f"{name}.pt").touch()
     config = cfg.Config({"output_dir": tmp_path})
-    assert orch._resolve_layer_nums(config) == [0, 2, 10]
+    assert orch._resolve_layer_nums(tmp_path) == [0, 2, 10]
 
 
-def test_prob_layers_env_overrides_discovery(tmp_path, monkeypatch):
+def test_explicit_layers_override_discovery(tmp_path):
     (tmp_path / "layer_1.pt").touch()
-    monkeypatch.setenv("PROB_LAYERS", " 0, 3,")
-    assert orch._resolve_layer_nums(cfg.Config({"output_dir": tmp_path})) == [0, 3]
+    assert orch._resolve_layer_nums(tmp_path, (0, 3)) == [0, 3]
 
 
 def test_no_layers_is_a_clear_error(tmp_path):
     with pytest.raises(FileNotFoundError, match="run_extraction"):
-        orch._resolve_layer_nums(cfg.Config({"output_dir": tmp_path}))
+        orch._resolve_layer_nums(tmp_path)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -204,19 +204,36 @@ def test_main_masks_nan_targets_out_of_x_y_idents_and_folds(world, recorded_prob
         assert not call["has_nan"]
 
 
-def test_main_env_flags_override_config(world, recorded_probes, monkeypatch):
+def test_main_env_flags_apply_when_config_does_not_set_them(world, recorded_probes, monkeypatch):
+    """How run_prob.sh / run_prob_local.sh steer a run: switches as PROB_* env vars."""
     monkeypatch.setenv("PROB_RUN_LINEAR_MODELS", "0")
     monkeypatch.setenv("PROB_RUN_NON_LINEAR_MODELS", "true")
     monkeypatch.setenv("PROB_NONLINEAR_MODELS", "mlp")
     monkeypatch.setenv("PROB_RUN_SHUFFLED_BASELINE", "1")
     monkeypatch.setenv("PROB_LAYERS", "1")
 
-    orch.main(make_config(world, run_shuffled_baseline=0))
+    config = make_config(world)
+    del config["run_shuffled_baseline"]
+    orch.main(config)
 
     assert [(c["names"], c["layer"], c["target"]) for c in recorded_probes] == [
         (["mlp"], 1, None),
         (["mlp"], 1, "affinity_shuffled_ident"),
     ]
+
+
+def test_main_cli_beats_config_beats_env(world, recorded_probes, monkeypatch):
+    monkeypatch.setenv("PROB_RUN_SHUFFLED_BASELINE", "1")
+    monkeypatch.setenv("PROB_LAYERS", "0")
+    # config says no baseline (beats env); the command line says layer 1 (beats env).
+    orch.main(make_config(world, run_shuffled_baseline=0), argv=["--layers", "1"])
+    assert [(c["layer"], c["target"]) for c in recorded_probes] == [(1, None)]
+
+
+def test_main_rejects_unknown_prob_env_vars(world, recorded_probes, monkeypatch):
+    monkeypatch.setenv("PROB_POOLD", "0")
+    with pytest.raises(ValueError, match="PROB_POOLD"):
+        orch.main(make_config(world))
 
 
 def test_main_baseline_tag_comes_from_config(world, recorded_probes):
@@ -250,14 +267,19 @@ def test_main_writes_a_run_manifest_with_sources_counts_and_hashes(world, record
     # The baseline target gets the same manifest.
     assert [p.read_text() for p in _manifests(world, "affinity_shuffled_ident")] == [path.read_text()]
 
-    s = m["settings"]
-    assert s["run_shuffled_baseline"] == {"value": True, "source": "config run_shuffled_baseline"}
-    assert s["run_linear_models"] == {"value": True, "source": "code default"}
-    assert s["layers"] == {"value": [1], "source": "env PROB_LAYERS='1'"}
-    assert s["n_jobs"] == {"value": 1, "source": "env SLURM_CPUS_PER_TASK"}
+    spec = m["spec"]
+    assert list(spec) == ["data", "target", "model", "evaluation", "compute"]
+    assert spec["target"]["settings"]["run_shuffled_baseline"] == {"value": True, "source": "config"}
+    assert spec["model"]["settings"]["run_linear_models"] == {"value": True, "source": "default"}
+    assert spec["data"]["settings"]["layers"] == {"value": [1], "source": "env PROB_LAYERS='1'"}
+    assert spec["data"]["settings"]["gnn_model_type"] == {"value": "CGNN-3D", "source": "config"}
+    assert spec["target"]["fixed"] == {"PERMUTATION_SEED": ProbeTargetSettings.PERMUTATION_SEED}
+    assert spec["model"]["fixed"]["INNER_CV_FOLDS"] == ProbeModelSettings.INNER_CV_FOLDS
+    assert spec["evaluation"]["settings"] == {}
+    assert spec["evaluation"]["fixed"]["BOOTSTRAP_N"] == ProbeEvalSettings.BOOTSTRAP_N
+    assert m["resolved"]["n_jobs"] == {"value": 1, "source": "env SLURM_CPUS_PER_TASK"}
+    assert m["resolved"]["layers"] == [1]
     assert m["probes"]["linear"][0]["name"] == "ridge" and m["probes"]["non_linear"] == []
-    assert m["constants"]["seeds"]["baseline_permutation"] == orch.RANDOM_STATE
-    assert m["constants"]["inner_cv_folds"] == orch.N_SPLITS_CV
 
     n_valid = int(np.isfinite(world.y).sum())
     assert m["data"]["rows_in_ids"] == len(world.idents)
@@ -271,7 +293,7 @@ def test_main_writes_a_run_manifest_with_sources_counts_and_hashes(world, record
     assert set(inputs["layers"]) == {"1"} and inputs["layers"]["1"]["exists"]
     assert inputs["target"]["exists"] and inputs["ids"]["exists"]
     assert inputs["extraction_manifest"]["exists"] is False  # the synthetic condition has none
-    assert m["request"]["target_file"] == "affinity.pt"
+    assert spec["target"]["settings"]["target_file"] == {"value": "affinity.pt", "source": "config"}
 
 
 def test_main_marks_the_manifest_failed_and_reraises(world, recorded_probes, monkeypatch):

@@ -18,7 +18,8 @@ export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 
-# Probe run-mode toggles, read by prob_orchestrate.main() via os.getenv(...).
+# Probe run-mode toggles, read by prob_config.resolve_experiment_spec (a --flag of the
+# same name on the command line would win over these).
 # $6 = run_linear (1/0), $7 = run_nonlinear (1/0), $8 = run_shuffled_baseline (1/0),
 # $9 = nonlinear_models (comma-separated subset of NONLINEAR_PROBES names, e.g. "mlp"; empty = all).
 # Defaults below match the previous hardcoded behavior if a queue line omits them.
