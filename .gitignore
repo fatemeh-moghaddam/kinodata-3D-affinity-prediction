@@ -32,6 +32,7 @@ prob/cluster/*.err
 # Managing files between local and cluster
 prob/_local/copy_probing_results.sh
 prob/_local/copy_reprs.sh
+prob/_local/copy_cluster_logs.sh
 
 # local runs
 prob/_local/run_prob_local.sh
