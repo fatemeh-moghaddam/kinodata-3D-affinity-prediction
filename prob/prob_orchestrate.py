@@ -63,9 +63,15 @@ _ROOT = Path(os.environ.get("HOME_PROJ_DIR", Path(__file__).resolve().parents[1]
 # ─────────────────────────────────────────────────────────────
 
 
+#: Scheduler env vars that give the job's CPU count, in order of preference. Not
+#: OMP_NUM_THREADS: the run scripts set it to 1 to keep math libraries single-threaded
+#: inside each CV worker, so it says nothing about how many workers to run.
+_CPU_COUNT_ENV_VARS = ("SLURM_CPUS_PER_TASK", "NSLOTS")
+
+
 def _cpu_budget(default: int = 16, sub_file: Optional[Path] = None) -> int:
     """Infer job CPU count from scheduler env vars, submission file, or default."""
-    for key in ("SLURM_CPUS_PER_TASK", "NSLOTS", "OMP_NUM_THREADS"):
+    for key in _CPU_COUNT_ENV_VARS:
         if key in os.environ and os.environ[key].isdigit():
             return int(os.environ[key])
     if sub_file is not None and Path(sub_file).exists():
@@ -451,7 +457,7 @@ def _write_summary(runs: List[Dict[str, Any]], summary_dir: Path) -> Path:
 
 def _cpu_budget_source(sub_file: Path) -> str:
     """Which input _cpu_budget took its value from (same order as _cpu_budget)."""
-    for key in ("SLURM_CPUS_PER_TASK", "NSLOTS", "OMP_NUM_THREADS"):
+    for key in _CPU_COUNT_ENV_VARS:
         if key in os.environ and os.environ[key].isdigit():
             return f"env {key}"
     if sub_file.exists() and re.search(r"request_CPUs\s*=\s*(\d+)", sub_file.read_text(), flags=re.I):

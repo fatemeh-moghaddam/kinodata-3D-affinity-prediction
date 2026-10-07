@@ -30,6 +30,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import secrets
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -60,8 +61,10 @@ def utc_now() -> str:
 
 
 def new_run_id() -> str:
-    """Sortable and unique enough for one user's runs: UTC time plus the process id."""
-    return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{os.getpid()}"
+    """Sortable and unique enough for one user's runs: UTC time, the process id and a
+    random suffix (cluster jobs run in containers, where process ids repeat, so jobs
+    starting in the same second would otherwise share an id)."""
+    return f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}_{os.getpid()}_{secrets.token_hex(2)}"
 
 
 def sha256_file(path: Path, chunk_size: int = 1 << 20) -> str:

@@ -56,6 +56,17 @@ def test_cpu_budget_prefers_scheduler_env_in_order(no_scheduler_env, monkeypatch
     assert orch._cpu_budget() == 4
 
 
+def test_cpu_budget_ignores_omp_num_threads(no_scheduler_env, monkeypatch, tmp_path):
+    # run_prob.sh sets OMP_NUM_THREADS=1 for the math libraries; the budget must still
+    # come from request_CPUs, not cap every GridSearchCV at one worker.
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    sub = tmp_path / "run_prob.sub"
+    sub.write_text("request_CPUs = 16\n")
+    assert orch._cpu_budget(default=3) == 3
+    assert orch._cpu_budget(sub_file=sub) == 16
+    assert orch._cpu_budget_source(sub) == f"request_CPUs in {sub}"
+
+
 def test_cpu_budget_ignores_non_numeric_env(no_scheduler_env, monkeypatch):
     monkeypatch.setenv("NSLOTS", "auto")
     assert orch._cpu_budget(default=3) == 3
